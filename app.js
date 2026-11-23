@@ -7,18 +7,36 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const app = $('#app');
 
-const FIELDS = [
-  ['presentingNeed', 'Presenting need'],
-  ['korero', 'Kōrero'],
-  ['strengths', 'Strengths'],
-  ['actions', 'Actions'],
-  ['culturalConsiderations', 'Cultural considerations'],
-  ['followUp', 'Follow up'],
+const HEAD_FIELDS = [
+  ['present', 'Present', 'Who was there'],
+  ['purpose', 'Purpose', 'e.g. first home visit'],
+  ['childSighted', 'Child sighted', 'Yes or No'],
+];
+const SECTIONS = [
+  ['general', 'General'],
+  ['attachmentParenting', 'Attachment/Parenting'],
+  ['safetyWellbeing', 'Safety/Wellbeing'],
+  ['cfp', 'CFP'],
+  ['services', 'Services'],
+  ['plan', 'Plan'],
 ];
 
 const fmtDT = ms => new Date(ms).toLocaleString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 const toLocalInput = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-const appendText = (a, b) => (a || '').trim() ? a.replace(/\s+$/, '') + ' ' + b.trim() : b.trim();
+const appendText = (a, b) => {
+  a = a || ''; b = (b || '').trim();
+  if (!a.trim()) return b;
+  return a.endsWith('\n') ? a + b : a.replace(/\s+$/, '') + ' ' + b;
+};
+const toDateInput = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const fmtD = ms => new Date(ms).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+/** Adds dictated text. In bullet boxes, saying "next point" starts a new line. */
+function addSpoken(ta, text) {
+  const t = (text || '').trim(); if (!t) return;
+  if (ta.tagName !== 'TEXTAREA') { ta.value = appendText(ta.value, t); return; }
+  const parts = t.split(/\b(?:next point|new bullet|next bullet)\b[,.]?\s*/i).map(x => x.trim());
+  ta.value = parts.reduce((acc, p, i) => i === 0 ? (p ? appendText(acc, p) : acc) : acc.replace(/\s+$/, '') + '\n' + p, ta.value);
+}
 
 const ICON_MIC = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>';
 const ICON_BACK = '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m14.7 5.3-1.4-1.4L5.2 12l8.1 8.1 1.4-1.4L8 12l6.7-6.7Z"/></svg>';
@@ -68,46 +86,88 @@ function confirmBox(msg, okLabel = 'Delete') {
 
 /* ================= Dictation ================= */
 let live = null;
+function setStatus(msg) {
+  let el = $('#listening');
+  if (!el) { el = document.createElement('div'); el.id = 'listening'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.textContent = msg; el.classList.toggle('show', !!msg);
+}
 function stopDictation() {
   if (!live) return;
-  const l = live; live = null; l.btn.classList.remove('on');
-  try { l.rec && l.rec.stop(); } catch { /* ignore */ }
+  const l = live; live = null; clearTimeout(l.startTimer); l.btn.classList.remove('on'); setStatus('');
+  try { l.rec && (l.rec.abort ? l.rec.abort() : l.rec.stop()); } catch { /* ignore */ }
+}
+function dictationHelp() {
+  const ua = navigator.userAgent;
+  const ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  if (ios && standalone) return 'Voice dictation doesn’t work in a Home Screen app on iPhone. Tap the microphone on your keyboard instead.';
+  if (/Firefox/.test(ua)) return 'Firefox doesn’t support voice dictation. Use Chrome, or the microphone on your keyboard.';
+  return 'This browser can’t do voice dictation here. Use Chrome, or the microphone on your keyboard.';
 }
 function toggleDictation(btn, ta) {
   if (live && live.btn === btn) { stopDictation(); return; }
   stopDictation();
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { toast('Dictation isn’t available in this browser. Use the microphone on your keyboard instead.'); return; }
-  const l = { btn, rec: null }; live = l; btn.classList.add('on');
+  if (!SR) { toast(dictationHelp()); return; }
+  const l = { btn, rec: null, silent: 0 }; live = l;
+  btn.classList.add('on'); setStatus('Starting microphone…');
   const run = () => {
-    const rec = new SR(); l.rec = rec;
-    rec.lang = 'en-NZ'; rec.continuous = false; rec.interimResults = false;
-    rec.onresult = e => { ta.value = appendText(ta.value, e.results[e.results.length - 1][0].transcript); };
-    rec.onerror = e => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { toast('Microphone access is blocked. Allow it in your browser’s site settings.'); stopDictation(); }
-      else if (e.error !== 'no-speech' && e.error !== 'aborted') { toast('Dictation stopped (' + e.error + ').'); stopDictation(); }
+    if (live !== l) return;
+    const rec = new SR(); l.rec = rec; let heard = false;
+    clearTimeout(l.startTimer);
+    l.startTimer = setTimeout(() => {
+      if (live === l && !l.started) { toast('The microphone didn’t start. Check the site’s microphone permission and that you’re online, or use the microphone on your keyboard.'); stopDictation(); }
+    }, 6000);
+    rec.lang = 'en-NZ'; rec.continuous = false; rec.interimResults = true; rec.maxAlternatives = 1;
+    rec.onstart = () => { l.started = true; clearTimeout(l.startTimer); setStatus('Listening… tap the red mic to stop'); };
+    rec.onresult = e => {
+      let fin = '', interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) fin += t; else interim += t;
+      }
+      if (interim) setStatus('Hearing: ' + interim);
+      if (fin.trim()) { heard = true; addSpoken(ta, fin); setStatus('Listening… tap the red mic to stop'); }
     };
-    rec.onend = () => { if (live === l) setTimeout(() => { if (live === l) run(); }, 150); };
-    try { rec.start(); } catch { stopDictation(); }
+    rec.onerror = e => {
+      const msgs = {
+        'not-allowed': 'The microphone is blocked. Allow it in your browser’s site settings, then try again.',
+        'service-not-allowed': 'Voice dictation is turned off on this phone. Check your browser and Google app settings.',
+        'audio-capture': 'No microphone found, or another app is using it.',
+        'network': 'Dictation needs an internet connection.',
+        'language-not-supported': 'This language isn’t supported for dictation on this phone.',
+      };
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      toast(msgs[e.error] || 'Dictation stopped (' + e.error + ').'); stopDictation();
+    };
+    rec.onend = () => {
+      if (live !== l) return;
+      if (heard) l.silent = 0;
+      else if (++l.silent >= 2) { toast('I didn’t hear anything. Tap the mic and try again.'); stopDictation(); return; }
+      setTimeout(run, 250);
+    };
+    try { rec.start(); } catch { toast('Couldn’t start the microphone. Tap it again.'); stopDictation(); }
   };
   run();
 }
 
-/** Say each heading followed by "colon". Text before the first heading goes under kōrero. */
+/** Say each heading followed by "colon". Say "next point" for a new bullet. Text before the first heading goes under General. */
 function parseHeadings(text) {
-  const clean = text.replace(/\bcolon\b/gi, ':').trim();
-  const re = /(presenting need|korero|kōrero|strengths|actions|cultural considerations|follow ?up)\s*[:\-]/gi;
+  const clean = text.replace(/\bslash\b/gi, '/').replace(/\b(?:next point|new bullet|next bullet)\b[,.]?\s*/gi, '\n').replace(/\bcolon\b/gi, ':').trim();
+  const re = /(present|purpose|child sighted|general|attachment\s*\/?\s*parenting|safety\s*\/?\s*wellbeing|c\.?\s?f\.?\s?p\.?|services|plan)\s*:/gi;
+  const map = { present: 'present', purpose: 'purpose', childsighted: 'childSighted', general: 'general', attachmentparenting: 'attachmentParenting', safetywellbeing: 'safetyWellbeing', cfp: 'cfp', services: 'services', plan: 'plan' };
   const ms = [...clean.matchAll(re)];
-  if (!ms.length) return { korero: clean };
+  if (!ms.length) return { general: clean };
   const out = {};
-  const pre = clean.slice(0, ms[0].index).trim();
-  if (pre) out.korero = pre;
+  const add = (k, v) => { v = v.trim(); if (v) out[k] = out[k] ? out[k] + '\n' + v : v; };
+  add('general', clean.slice(0, ms[0].index));
   ms.forEach((m, i) => {
     const start = m.index + m[0].length;
     const end = i + 1 < ms.length ? ms[i + 1].index : clean.length;
-    const key = { 'presenting need': 'presentingNeed', korero: 'korero', 'kōrero': 'korero', strengths: 'strengths', actions: 'actions', 'cultural considerations': 'culturalConsiderations' }[m[1].toLowerCase()] || 'followUp';
-    const val = clean.slice(start, end).trim();
-    out[key] = out[key] ? out[key] + ' ' + val : val;
+    const key = map[m[1].toLowerCase().replace(/[\s./]/g, '')];
+    let v = clean.slice(start, end);
+    if (['present', 'purpose', 'childSighted'].includes(key)) v = v.replace(/\s*\n\s*/g, ' ');
+    add(key, v);
   });
   return out;
 }
@@ -212,7 +272,7 @@ function icsText(r) {
 }
 function download(name, text, type) {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name;
+  a.href = URL.createObjectURL(text instanceof Blob ? text : new Blob([text], { type })); a.download = name;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 function reminderDialog(clientId, defaultTitle) {
@@ -235,6 +295,68 @@ function reminderDialog(clientId, defaultTitle) {
       await DB.put('reminders', JSON.parse(d.dataset.rec)); res(true);
     };
   });
+}
+
+/* ================= Word document (matches your case note template) ================= */
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+function crc32(buf) {
+  if (!crc32.t) { crc32.t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; crc32.t[n] = c >>> 0; } }
+  let crc = -1; for (let i = 0; i < buf.length; i++) crc = crc32.t[(crc ^ buf[i]) & 255] ^ (crc >>> 8);
+  return (crc ^ -1) >>> 0;
+}
+function zipStore(files) {
+  const enc = new TextEncoder(), u16 = n => [n & 255, (n >> 8) & 255], u32 = n => [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255];
+  const out = [], central = []; let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = enc.encode(f.data), crc = crc32(data);
+    const local = [0x50, 0x4b, 3, 4, ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21), ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(name.length), ...u16(0)];
+    central.push([0x50, 0x4b, 1, 2, ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21), ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(name.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(offset), ...name]);
+    out.push(new Uint8Array(local), name, data);
+    offset += local.length + name.length + data.length;
+  }
+  const cd = central.flat();
+  out.push(new Uint8Array(cd), new Uint8Array([0x50, 0x4b, 5, 6, 0, 0, 0, 0, ...u16(files.length), ...u16(files.length), ...u32(cd.length), ...u32(offset), 0, 0]));
+  return new Blob(out, { type: DOCX_MIME });
+}
+const xmlEsc = t => String(t).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+function buildDocx(rec) {
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const run = t => `<w:r><w:rPr><w:lang w:val="en-NZ"/></w:rPr><w:t xml:space="preserve">${xmlEsc(t)}</w:t></w:r>`;
+  const para = t => `<w:p>${t ? run(t) : ''}</w:p>`;
+  const bullet = t => `<w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>${run(t)}</w:p>`;
+  const [y, m, d] = (rec.visitDate || toDateInput(rec.dateTime)).split('-');
+  const body = [para(`Date: ${d}/${m}/${y}`), para(`Present: ${rec.present || ''}`.trim()), para(`Purpose: ${rec.purpose || ''}`.trim()), para(`Child sighted: ${rec.childSighted || ''}`.trim())];
+  for (const [k, label] of SECTIONS) {
+    body.push(para(label + ':'));
+    String(rec[k] || '').split(/\r?\n/).map(l => l.replace(/^\s*[-•*–]\s+/, '').trim()).filter(Boolean).forEach(l => body.push(bullet(l)));
+  }
+  const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  return zipStore([
+    { name: '[Content_Types].xml', data: xml + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>' },
+    { name: '_rels/.rels', data: xml + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/officeDocument" Target="word/document.xml"/></Relationships>` },
+    { name: 'word/_rels/document.xml.rels', data: xml + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/styles" Target="styles.xml"/><Relationship Id="rId2" Type="${R}/numbering" Target="numbering.xml"/></Relationships>` },
+    { name: 'word/document.xml', data: xml + `<w:document ${W}><w:body>${body.join('')}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>` },
+    { name: 'word/styles.xml', data: xml + `<w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Aptos" w:hAnsi="Aptos" w:eastAsia="Aptos" w:cs="Aptos"/><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="en-NZ" w:eastAsia="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="278" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="34"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style></w:styles>` },
+    { name: 'word/numbering.xml', data: xml + `<w:numbering ${W}><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="\uF0B7"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr><w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:hint="default"/></w:rPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>` },
+  ]);
+}
+function docxName(rec, client) {
+  const [y, m, d] = (rec.visitDate || toDateInput(rec.dateTime)).split('-');
+  return `Case note - ${client.name} - ${d}-${m}-${y}.docx`.replace(/[\\/:*?"<>|]/g, '');
+}
+async function sendWord(rec, client) {
+  const fname = docxName(rec, client), blob = buildDocx(rec);
+  const file = new File([blob], fname, { type: DOCX_MIME });
+  const email = localStorage.getItem('cf_email') || '';
+  if (email && navigator.clipboard) { try { await navigator.clipboard.writeText(email); toast('Your email address is copied. Paste it in the To box.'); } catch { /* ignore */ } }
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'Case note', text: 'Case note attached.' }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  download(fname, blob, DOCX_MIME);
+  toast('Word file saved. Attach it to the email that opens.');
+  setTimeout(() => { location.href = 'mailto:' + encodeURIComponent(email) + '?subject=' + encodeURIComponent('Case note') + '&body=' + encodeURIComponent('Case note attached.'); }, 600);
 }
 
 /* ================= Views ================= */
@@ -287,7 +409,7 @@ async function clientView(id) {
     <div class="actions"><a class="btn" href="#/note/${id}/new">New note</a><button class="btn ghost" id="addrem" type="button">Add reminder</button></div>
     ${rems.length ? `<h2>Reminders</h2><ul class="list">${rems.map(r => `<li class="row live"><div class="grow"><b>${esc(r.title)}</b><span>${fmtDT(r.time)}${r.repeatDaily ? ' · daily' : ''}</span></div><button class="icon-btn" data-rem="${r.id}" aria-label="Delete reminder">${ICON_TRASH}</button></li>`).join('')}</ul>` : ''}
     <h2>Case notes</h2>
-    ${notes.length ? `<ul class="list">${notes.map(n => `<li><a href="#/note/${id}/${n.id}"><span class="when">${fmtDT(n.dateTime)}</span><span class="snip">${esc(n.presentingNeed || n.korero || n.actions || '(empty note)')}</span></a></li>`).join('')}</ul>` : '<p class="empty">No notes yet. Tap New note to add one.</p>'}`;
+    ${notes.length ? `<ul class="list">${notes.map(n => { const first = String(n.general || n.presentingNeed || n.korero || '').split(/\r?\n/).find(Boolean) || ''; return `<li><a href="#/note/${id}/${n.id}"><span class="when">${fmtD(n.dateTime)}${n.purpose ? ' · ' + esc(n.purpose) : ''}</span><span class="snip">${esc(first || '(empty note)')}</span></a></li>`; }).join('')}</ul>` : '<p class="empty">No notes yet. Tap New note to add one.</p>'}`;
   $('#addrem').onclick = async () => { if (await reminderDialog(id, 'Follow up: ' + c.name)) clientView(id); };
   $$('[data-rem]').forEach(b => b.onclick = async () => { await DB.del('reminders', +b.dataset.rem); clientView(id); });
 }
@@ -296,28 +418,58 @@ async function noteForm(clientId, noteId) {
   const c = await DB.get('clients', clientId);
   if (!c) { location.hash = '#/'; return; }
   const n = noteId ? await DB.get('notes', noteId) : null;
+  const legacy = ['presentingNeed', 'korero', 'strengths', 'actions', 'culturalConsiderations', 'followUp'];
+  const val = k => {
+    if (!n) return '';
+    if (k === 'general' && !('general' in n)) return legacy.map(x => n[x]).filter(Boolean).join('\n');
+    return n[k] ?? '';
+  };
+  const today = toDateInput(Date.now());
+  const dateVal = n?.visitDate || (n ? toDateInput(n.dateTime) : today);
+  let currentId = n?.id;
   app.innerHTML = `${head(noteId ? 'Edit note' : 'New note', `#/client/${clientId}`, noteId ? '<button class="btn small ghost danger-text" id="delnote" type="button">Delete</button>' : '')}
-    <p class="sub">${esc(c.name)}${n ? ' · ' + fmtDT(n.dateTime) : ''}</p>
+    <p class="sub">${esc(c.name)}</p>
     <form id="nf" class="stack">
       <section class="card quick"><label for="quick">Quick dictation</label>
-        <p class="hint">Tap the microphone and say each heading followed by “colon”, for example “presenting need colon …”. Then tap Sort into sections.</p>
+        <p class="hint">Tap the microphone and say each heading followed by “colon”, for example “purpose colon first home visit, general colon …”. Say “next point” to start a new bullet. Then tap Sort into sections.</p>
         <div class="field"><textarea id="quick" rows="4"></textarea>${micBtn('quick', 'Dictate')}</div>
         <button type="button" class="btn ghost" id="sort">Sort into sections</button></section>
-      ${FIELDS.map(([k, l]) => `<div class="field"><label for="f-${k}">${l}</label><textarea id="f-${k}" rows="3">${esc(n?.[k])}</textarea>${micBtn('f-' + k, 'Dictate ' + l)}</div>`).join('')}
-      <button class="btn" type="submit">Save note</button></form>`;
+      <div><label for="f-visitDate">Date</label><input id="f-visitDate" type="date" required value="${dateVal}"></div>
+      ${HEAD_FIELDS.map(([k, l, ph]) => `<div class="field"><label for="f-${k}">${l}</label><input id="f-${k}" type="text" autocomplete="off" placeholder="${ph}" ${k === 'childSighted' ? 'list="yn"' : ''} value="${esc(val(k))}">${micBtn('f-' + k, 'Dictate ' + l)}</div>`).join('')}
+      <datalist id="yn"><option value="Yes"><option value="No"></datalist>
+      ${SECTIONS.map(([k, l]) => `<div class="field"><label for="f-${k}">${l}</label><textarea id="f-${k}" rows="4" placeholder="One point per line. Each line becomes a bullet.">${esc(val(k))}</textarea>${micBtn('f-' + k, 'Dictate ' + l)}</div>`).join('')}
+      <button class="btn" type="submit">Save note</button>
+      <div class="actions"><button type="button" class="btn ghost" id="wordbtn">Save as Word</button><button type="button" class="btn ghost" id="sendbtn">Send to my email</button></div>
+    </form>`;
   $$('.mic').forEach(b => b.onclick = () => toggleDictation(b, $('#' + b.dataset.for)));
   $('#sort').onclick = () => {
     const parsed = parseHeadings($('#quick').value);
-    for (const [k, v] of Object.entries(parsed)) { const ta = $('#f-' + k); ta.value = appendText(ta.value, v); }
+    for (const [k, v] of Object.entries(parsed)) {
+      const el = $('#f-' + k); if (!el) continue;
+      if (el.tagName === 'TEXTAREA') el.value = el.value.trim() ? el.value.replace(/\s+$/, '') + '\n' + v : v;
+      else el.value = appendText(el.value, v);
+    }
     $('#quick').value = ''; toast('Sorted into sections.');
   };
-  $('#nf').onsubmit = async e => {
-    e.preventDefault(); stopDictation();
-    const rec = { ...(n || {}), clientId, dateTime: n?.dateTime ?? Date.now() };
-    for (const [k] of FIELDS) rec[k] = $('#f-' + k).value.trim();
-    const q = $('#quick').value.trim(); if (q) rec.korero = appendText(rec.korero, q);
-    await DB.put('notes', rec); location.hash = `#/client/${clientId}`;
+  const persist = async () => {
+    stopDictation();
+    const rec = { ...(n || {}), clientId };
+    rec.visitDate = $('#f-visitDate').value || today;
+    rec.dateTime = new Date(rec.visitDate + 'T12:00:00').getTime();
+    for (const [k] of [...HEAD_FIELDS, ...SECTIONS]) rec[k] = $('#f-' + k).value.trim();
+    const q = $('#quick').value.trim();
+    if (q) { rec.general = rec.general ? rec.general + '\n' + q : q; $('#f-general').value = rec.general; $('#quick').value = ''; }
+    if (currentId) rec.id = currentId;
+    currentId = await DB.put('notes', rec); rec.id = currentId;
+    return rec;
   };
+  $('#nf').onsubmit = async e => { e.preventDefault(); await persist(); location.hash = `#/client/${clientId}`; };
+  $('#wordbtn').onclick = async () => {
+    const rec = await persist();
+    download(docxName(rec, c), buildDocx(rec), DOCX_MIME);
+    toast('Saved as Word in your Downloads.');
+  };
+  $('#sendbtn').onclick = async () => { const rec = await persist(); await sendWord(rec, c); };
   if (noteId) $('#delnote').onclick = async () => {
     if (await confirmBox('Delete this note? This can’t be undone.')) { await DB.del('notes', noteId); location.hash = `#/client/${clientId}`; }
   };
@@ -346,6 +498,10 @@ async function settingsView() {
     <section class="section card"><h2 style="margin-top:0">Notifications</h2>
       <p class="hint">${perm === 'granted' ? 'Notifications are on.' : perm === 'denied' ? 'Notifications are blocked. Allow them in your browser’s site settings.' : perm === 'unsupported' ? 'This browser doesn’t support notifications. On iPhone, add Case Flow to your Home Screen first.' : 'Allow notifications so reminders can alert you while the app is in the background.'}</p>
       ${perm === 'default' ? '<button class="btn ghost" id="notif" type="button">Allow notifications</button>' : ''}</section>
+    <section class="section card"><h2 style="margin-top:0">Send notes to</h2>
+      <p class="hint">Your email address. It stays on this phone. When you tap Send to my email, it’s copied so you can paste it into the To box.</p>
+      <input id="mail" type="email" autocomplete="email" aria-label="Your email address" value="${esc(localStorage.getItem('cf_email') || '')}">
+      <button class="btn ghost" id="savemail" type="button">Save email</button></section>
     <section class="section card"><h2 style="margin-top:0">Backup</h2>
       <p class="hint">Your data lives only on this device. If you clear browser data or change phones it’s gone, so export a backup regularly. The backup file is not encrypted, so store it somewhere private.</p>
       <button class="btn ghost" id="export" type="button">Export backup</button>
@@ -353,6 +509,7 @@ async function settingsView() {
   $('#setpin').onclick = async () => { const p = await pinDialog(); if (p) { await setPin(p); toast('PIN saved.'); settingsView(); } };
   if (hasPin()) $('#rmpin').onclick = async () => { if (await confirmBox('Remove the PIN lock?', 'Remove')) { localStorage.removeItem(PIN_KEY); settingsView(); } };
   if (perm === 'default') $('#notif').onclick = async () => { await Notification.requestPermission(); settingsView(); };
+  $('#savemail').onclick = () => { localStorage.setItem('cf_email', $('#mail').value.trim()); toast('Email saved.'); };
   $('#export').onclick = async () => {
     const data = { app: 'case-flow', version: 1, exportedAt: new Date().toISOString(), clients: await DB.all('clients'), notes: await DB.all('notes'), reminders: await DB.all('reminders') };
     download(`case-flow-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data), 'application/json');

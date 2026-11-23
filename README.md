@@ -1,6 +1,6 @@
 # Case Flow (PWA)
 
-Private case notes for up to 20 clients, voice dictation, reminders, PIN lock and backups.
+Private case notes for up to 20 clients, laid out like your Word case note template (Date, Present, Purpose, Child sighted, then General, Attachment/Parenting, Safety/Wellbeing, CFP, Services, Plan). Voice dictation, reminders, PIN lock, backups, and one-tap Word export or send to your email.
 Runs in the browser and installs to your phone's home screen. No server, no account, no tracking.
 All data is stored on your device only (IndexedDB). GitHub Pages hosts the code, not your data.
 
@@ -13,6 +13,11 @@ All data is stored on your device only (IndexedDB). GitHub Pages hosts the code,
 ## Install on your phone
 - Android (Chrome): open the link > menu > Install app.
 - iPhone (Safari): open the link > Share > Add to Home Screen.
+
+## Word and email
+- Save as Word creates a .docx in your Downloads, formatted like your template.
+- Send to my email opens your phone's share sheet with the Word file attached. Pick Gmail and paste your address (the app copies it for you). Add your address once in Settings.
+- Say "next point" while dictating to start a new bullet.
 
 ## Notes
 - Dictation uses the browser's speech recognition (best in Chrome on Android). Say each heading followed by "colon", then tap Sort into sections.

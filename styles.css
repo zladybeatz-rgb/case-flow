@@ -81,7 +81,7 @@ a { color: var(--brand); }
 
 .stack { display: grid; gap: 1rem; }
 label { display: block; font-weight: 600; margin-bottom: .3rem; }
-input[type=text], input[type=password], input[type=datetime-local], textarea {
+input[type=text], input[type=password], input[type=datetime-local], input[type=email], input[type=date], textarea {
   width: 100%; font: inherit; color: var(--ink); background: var(--surface);
   border: 1.5px solid var(--line); border-radius: 10px; padding: .7rem .8rem; min-height: 48px;
 }
@@ -126,3 +126,8 @@ dialog .row { display: flex; gap: .6rem; justify-content: flex-end; margin-top: 
 .section .btn { margin-top: .5rem; }
 
 @media (prefers-reduced-motion: reduce) { .mic.on { animation: none; } #toast { transition: none; } }
+
+#listening { position: fixed; top: calc(.6rem + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); background: var(--brand); color: var(--brand-ink); padding: .5rem 1rem; border-radius: 999px; font-weight: 600; z-index: 70; max-width: 92vw; text-align: center; opacity: 0; pointer-events: none; transition: opacity .15s; }
+#listening.show { opacity: 1; }
+
+.field input { padding-right: 3.4rem; }
