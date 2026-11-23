@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Case Flow</title>
+  <meta name="description" content="Private case notes, dictation and reminders.">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#1b4d44">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Case Flow">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="alerts" aria-live="assertive"></div>
+  <main id="app"></main>
+  <nav id="tabs" aria-label="Main">
+    <a href="#/" data-tab="clients">Clients</a>
+    <a href="#/reminders" data-tab="reminders">Reminders</a>
+    <a href="#/settings" data-tab="settings">Settings</a>
+  </nav>
+  <dialog id="dlg"></dialog>
+  <div id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>

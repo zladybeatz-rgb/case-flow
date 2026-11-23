@@ -1,2 +1,21 @@
-# case-flow
-Private Android app for managing case notes, up to 20 clients, voice dictation, and reminder alarms.
+# Case Flow (PWA)
+
+Private case notes for up to 20 clients, voice dictation, reminders, PIN lock and backups.
+Runs in the browser and installs to your phone's home screen. No server, no account, no tracking.
+All data is stored on your device only (IndexedDB). GitHub Pages hosts the code, not your data.
+
+## Put it online with GitHub Pages
+1. On github.com, create a new repository (e.g. `case-flow-app`). Free Pages needs it to be public; that's fine because it only holds code.
+2. Upload every file and the `icons` folder from this project to the repo root (Add file > Upload files).
+3. Repo > Settings > Pages > Source: "Deploy from a branch", Branch: `main`, Folder: `/ (root)` > Save.
+4. After a minute it's live at `https://YOUR-USERNAME.github.io/case-flow-app/`.
+
+## Install on your phone
+- Android (Chrome): open the link > menu > Install app.
+- iPhone (Safari): open the link > Share > Add to Home Screen.
+
+## Notes
+- Dictation uses the browser's speech recognition (best in Chrome on Android). Say each heading followed by "colon", then tap Sort into sections.
+- Reminders alert while the app is open. For alarms when it's closed, tap Calendar on a reminder to add it to your phone's calendar.
+- Export a backup from Settings regularly. Clearing browser data deletes everything.
+- After you update files, reopen the app twice to pick up the new version.
