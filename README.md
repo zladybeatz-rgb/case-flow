@@ -14,6 +14,10 @@ All data is stored on your device only (IndexedDB). GitHub Pages hosts the code,
 - Android (Chrome): open the link > menu > Install app.
 - iPhone (Safari): open the link > Share > Add to Home Screen.
 
+## Completion indicator
+- The note screen shows a live "x of 9" bar and tappable section chips that tick off as you fill them in (tap a chip to jump to that section).
+- Notes show an amber draft count (e.g. 4/9) until all nine are filled, then a green Complete badge. The home screen counts draft notes.
+
 ## Word and email
 - Save as Word creates a .docx in your Downloads, formatted like your template.
 - Send to my email opens your phone's share sheet with the Word file attached. Pick Gmail and paste your address (the app copies it for you). Add your address once in Settings.

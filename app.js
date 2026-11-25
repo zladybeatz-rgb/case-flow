@@ -20,6 +20,17 @@ const SECTIONS = [
   ['services', 'Services'],
   ['plan', 'Plan'],
 ];
+const FIELD_KEYS = [...HEAD_FIELDS.map(f => f[0]), ...SECTIONS.map(f => f[0])];
+const CHIP_LABELS = { present: 'Present', purpose: 'Purpose', childSighted: 'Sighted', general: 'General', attachmentParenting: 'Attachment', safetyWellbeing: 'Safety', cfp: 'CFP', services: 'Services', plan: 'Plan' };
+const LEGACY_KEYS = ['presentingNeed', 'korero', 'strengths', 'actions', 'culturalConsiderations', 'followUp'];
+function completion(rec) {
+  const has = k => (k === 'general' && !('general' in rec))
+    ? LEGACY_KEYS.some(x => String(rec[x] || '').trim()) : String(rec[k] || '').trim() !== '';
+  return { done: FIELD_KEYS.filter(has).length, total: FIELD_KEYS.length };
+}
+const pill = rec => { const { done, total } = completion(rec); return done === total ? '<span class="pill ok">Complete</span>' : `<span class="pill warn">${done}/${total}</span>`; };
+const initials = name => (name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+const ICON_CHECK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m9.5 17.3-4.8-4.8 1.4-1.4 3.4 3.4 8.4-8.4 1.4 1.4-9.8 9.8Z"/></svg>';
 
 const fmtDT = ms => new Date(ms).toLocaleString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 const toLocalInput = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -33,9 +44,11 @@ const fmtD = ms => new Date(ms).toLocaleDateString('en-NZ', { weekday: 'short', 
 /** Adds dictated text. In bullet boxes, saying "next point" starts a new line. */
 function addSpoken(ta, text) {
   const t = (text || '').trim(); if (!t) return;
-  if (ta.tagName !== 'TEXTAREA') { ta.value = appendText(ta.value, t); return; }
+  const notify = () => ta.dispatchEvent(new Event('input', { bubbles: true }));
+  if (ta.tagName !== 'TEXTAREA') { ta.value = appendText(ta.value, t); notify(); return; }
   const parts = t.split(/\b(?:next point|new bullet|next bullet)\b[,.]?\s*/i).map(x => x.trim());
   ta.value = parts.reduce((acc, p, i) => i === 0 ? (p ? appendText(acc, p) : acc) : acc.replace(/\s+$/, '') + '\n' + p, ta.value);
+  notify();
 }
 
 const ICON_MIC = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>';
@@ -364,11 +377,18 @@ const head = (title, back, extra = '') => `<header class="bar"><a class="back" h
 
 async function clientsView() {
   const clients = (await DB.all('clients')).sort((a, b) => a.name.localeCompare(b.name));
+  const stats = {}; let drafts = 0;
+  for (const n of await DB.all('notes')) {
+    const c = completion(n); const st = stats[n.clientId] || (stats[n.clientId] = { count: 0, drafts: 0 });
+    st.count++; if (c.done < c.total) { st.drafts++; drafts++; }
+  }
   const ticks = Array.from({ length: MAX_CLIENTS }, (_, i) => `<i class="${i < clients.length ? 'on' : ''}"></i>`).join('');
-  app.innerHTML = `<header class="hero"><h1>Case Flow</h1><div class="meter" role="img" aria-label="${clients.length} of ${MAX_CLIENTS} clients">${ticks}</div><p>${clients.length} of ${MAX_CLIENTS} clients</p></header>
-    ${clients.length ? `<ul class="list">${clients.map(c => `<li><a href="#/client/${c.id}"><strong>${esc(c.name)}</strong><span>${esc([c.culturalName, c.pronouns].filter(Boolean).join(' · '))}</span></a></li>`).join('')}</ul>`
+  app.innerHTML = `<header class="hero"><h1>Case Flow</h1><div class="meter" role="img" aria-label="${clients.length} of ${MAX_CLIENTS} clients">${ticks}</div>
+      <p>${clients.length} of ${MAX_CLIENTS} clients${drafts ? ` · ${drafts} draft note${drafts === 1 ? '' : 's'} to finish` : ''}</p></header>
+    ${clients.length ? `<ul class="list">${clients.map(c => { const st = stats[c.id] || { count: 0, drafts: 0 }; const sub = [c.culturalName, c.pronouns].filter(Boolean).join(' · ');
+      return `<li><a class="crow" href="#/client/${c.id}"><span class="avatar" aria-hidden="true">${esc(initials(c.name))}</span><span class="cmeta"><strong>${esc(c.name)}</strong><span>${esc(sub || (st.count + (st.count === 1 ? ' note' : ' notes')))}</span></span>${st.drafts ? `<span class="pill warn">${st.drafts} draft${st.drafts === 1 ? '' : 's'}</span>` : ''}<span class="chev" aria-hidden="true">›</span></a></li>`; }).join('')}</ul>`
       : '<p class="empty">No clients yet. Add your first client to start taking notes.</p>'}
-    <a class="fab" href="#/client/new">New client</a>`;
+    <a class="fab" href="#/client/new">+ New client</a>`;
   $('.fab').onclick = e => { if (clients.length >= MAX_CLIENTS) { e.preventDefault(); toast('You’ve reached the 20 client limit.'); } };
 }
 
@@ -409,7 +429,7 @@ async function clientView(id) {
     <div class="actions"><a class="btn" href="#/note/${id}/new">New note</a><button class="btn ghost" id="addrem" type="button">Add reminder</button></div>
     ${rems.length ? `<h2>Reminders</h2><ul class="list">${rems.map(r => `<li class="row live"><div class="grow"><b>${esc(r.title)}</b><span>${fmtDT(r.time)}${r.repeatDaily ? ' · daily' : ''}</span></div><button class="icon-btn" data-rem="${r.id}" aria-label="Delete reminder">${ICON_TRASH}</button></li>`).join('')}</ul>` : ''}
     <h2>Case notes</h2>
-    ${notes.length ? `<ul class="list">${notes.map(n => { const first = String(n.general || n.presentingNeed || n.korero || '').split(/\r?\n/).find(Boolean) || ''; return `<li><a href="#/note/${id}/${n.id}"><span class="when">${fmtD(n.dateTime)}${n.purpose ? ' · ' + esc(n.purpose) : ''}</span><span class="snip">${esc(first || '(empty note)')}</span></a></li>`; }).join('')}</ul>` : '<p class="empty">No notes yet. Tap New note to add one.</p>'}`;
+    ${notes.length ? `<ul class="list">${notes.map(n => { const first = String(n.general || n.presentingNeed || n.korero || '').split(/\r?\n/).find(Boolean) || ''; return `<li><a href="#/note/${id}/${n.id}"><div class="ntop"><span class="when">${fmtD(n.dateTime)}${n.purpose ? ' · ' + esc(n.purpose) : ''}</span>${pill(n)}</div><span class="snip">${esc(first || '(empty note)')}</span></a></li>`; }).join('')}</ul>` : '<p class="empty">No notes yet. Tap New note to add one.</p>'}`;
   $('#addrem').onclick = async () => { if (await reminderDialog(id, 'Follow up: ' + c.name)) clientView(id); };
   $$('[data-rem]').forEach(b => b.onclick = async () => { await DB.del('reminders', +b.dataset.rem); clientView(id); });
 }
@@ -427,20 +447,41 @@ async function noteForm(clientId, noteId) {
   const today = toDateInput(Date.now());
   const dateVal = n?.visitDate || (n ? toDateInput(n.dateTime) : today);
   let currentId = n?.id;
+  const sect = (k, l, inner) => `<div class="sect" id="w-${k}"><div class="shead"><label for="f-${k}">${l}</label><span class="tick" aria-hidden="true">${ICON_CHECK}</span></div>${inner}${micBtn('f-' + k, 'Dictate ' + l)}</div>`;
   app.innerHTML = `${head(noteId ? 'Edit note' : 'New note', `#/client/${clientId}`, noteId ? '<button class="btn small ghost danger-text" id="delnote" type="button">Delete</button>' : '')}
     <p class="sub">${esc(c.name)}</p>
     <form id="nf" class="stack">
+      <div class="progress" id="prog" role="status"><div class="ptext"><strong id="pcount"></strong><span id="plabel"></span></div><div class="pbar"><i id="pfill"></i></div>
+        <div class="chips">${FIELD_KEYS.map(k => `<button type="button" class="chip" data-k="${k}">${ICON_CHECK}${CHIP_LABELS[k]}</button>`).join('')}</div></div>
       <section class="card quick"><label for="quick">Quick dictation</label>
         <p class="hint">Tap the microphone and say each heading followed by “colon”, for example “purpose colon first home visit, general colon …”. Say “next point” to start a new bullet. Then tap Sort into sections.</p>
         <div class="field"><textarea id="quick" rows="4"></textarea>${micBtn('quick', 'Dictate')}</div>
         <button type="button" class="btn ghost" id="sort">Sort into sections</button></section>
-      <div><label for="f-visitDate">Date</label><input id="f-visitDate" type="date" required value="${dateVal}"></div>
-      ${HEAD_FIELDS.map(([k, l, ph]) => `<div class="field"><label for="f-${k}">${l}</label><input id="f-${k}" type="text" autocomplete="off" placeholder="${ph}" ${k === 'childSighted' ? 'list="yn"' : ''} value="${esc(val(k))}">${micBtn('f-' + k, 'Dictate ' + l)}</div>`).join('')}
+      <div class="sect"><div class="shead"><label for="f-visitDate">Date</label></div><input id="f-visitDate" type="date" required value="${dateVal}"></div>
+      ${HEAD_FIELDS.map(([k, l, ph]) => sect(k, l, `<input id="f-${k}" type="text" autocomplete="off" placeholder="${ph}" ${k === 'childSighted' ? 'list="yn"' : ''} value="${esc(val(k))}">`)).join('')}
       <datalist id="yn"><option value="Yes"><option value="No"></datalist>
-      ${SECTIONS.map(([k, l]) => `<div class="field"><label for="f-${k}">${l}</label><textarea id="f-${k}" rows="4" placeholder="One point per line. Each line becomes a bullet.">${esc(val(k))}</textarea>${micBtn('f-' + k, 'Dictate ' + l)}</div>`).join('')}
+      ${SECTIONS.map(([k, l]) => sect(k, l, `<textarea id="f-${k}" rows="4" placeholder="One point per line. Each line becomes a bullet.">${esc(val(k))}</textarea>`)).join('')}
       <button class="btn" type="submit">Save note</button>
       <div class="actions"><button type="button" class="btn ghost" id="wordbtn">Save as Word</button><button type="button" class="btn ghost" id="sendbtn">Send to my email</button></div>
     </form>`;
+  const refresh = () => {
+    let done = 0;
+    for (const k of FIELD_KEYS) {
+      const ok = $('#f-' + k).value.trim() !== ''; if (ok) done++;
+      $('#w-' + k).classList.toggle('filled', ok); $(`.chip[data-k="${k}"]`).classList.toggle('done', ok);
+    }
+    $('#pcount').textContent = `${done} of ${FIELD_KEYS.length}`;
+    $('#plabel').textContent = done === FIELD_KEYS.length ? 'Complete, ready to send' : 'sections filled';
+    $('#pfill').style.width = (done / FIELD_KEYS.length * 100) + '%';
+    $('#prog').classList.toggle('complete', done === FIELD_KEYS.length);
+  };
+  $('#nf').addEventListener('input', refresh);
+  $$('.chip').forEach(ch => ch.onclick = () => {
+    const w = $('#w-' + ch.dataset.k);
+    w.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+    $('#f-' + ch.dataset.k).focus({ preventScroll: true });
+  });
+  refresh();
   $$('.mic').forEach(b => b.onclick = () => toggleDictation(b, $('#' + b.dataset.for)));
   $('#sort').onclick = () => {
     const parsed = parseHeadings($('#quick').value);
@@ -449,7 +490,7 @@ async function noteForm(clientId, noteId) {
       if (el.tagName === 'TEXTAREA') el.value = el.value.trim() ? el.value.replace(/\s+$/, '') + '\n' + v : v;
       else el.value = appendText(el.value, v);
     }
-    $('#quick').value = ''; toast('Sorted into sections.');
+    $('#quick').value = ''; refresh(); toast('Sorted into sections.');
   };
   const persist = async () => {
     stopDictation();
@@ -458,7 +499,7 @@ async function noteForm(clientId, noteId) {
     rec.dateTime = new Date(rec.visitDate + 'T12:00:00').getTime();
     for (const [k] of [...HEAD_FIELDS, ...SECTIONS]) rec[k] = $('#f-' + k).value.trim();
     const q = $('#quick').value.trim();
-    if (q) { rec.general = rec.general ? rec.general + '\n' + q : q; $('#f-general').value = rec.general; $('#quick').value = ''; }
+    if (q) { rec.general = rec.general ? rec.general + '\n' + q : q; $('#f-general').value = rec.general; $('#quick').value = ''; refresh(); }
     if (currentId) rec.id = currentId;
     currentId = await DB.put('notes', rec); rec.id = currentId;
     return rec;
