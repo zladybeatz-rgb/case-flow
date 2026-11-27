@@ -15,7 +15,7 @@ All data is stored on your device only (IndexedDB). GitHub Pages hosts the code,
 - iPhone (Safari): open the link > Share > Add to Home Screen.
 
 ## Quick dictation
-- Tap the big mic, say a heading, pause, then talk. Headings: Present, Purpose, Child sighted, General, Attachment parenting, Safety wellbeing, CFP, Services, Plan.
+- Tap the big mic once. It keeps listening through pauses and only stops when you tap it again (or after a minute of silence, with a Continue button). Say a heading, pause, then talk. Headings: Present, Purpose, Child sighted, General, Attachment parenting, Safety wellbeing, CFP, Services, Plan.
 - If you don't want to pause, say the word "heading" first, for example "heading plan call the provider". Saying "plan colon ..." still works too.
 - Say "bullet point" to start a new bullet. Anything said before the first heading goes under General.
 - Tap Sort into sections. Tap Undo on the message at the bottom if you don't like the result.

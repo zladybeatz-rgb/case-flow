@@ -113,7 +113,7 @@ function setStatus(msg) {
 }
 function stopDictation() {
   if (!live) return;
-  const l = live; live = null; clearTimeout(l.startTimer); l.btn.classList.remove('on'); setStatus('');
+  const l = live; live = null; clearTimeout(l.startTimer); clearInterval(l.silenceTimer); l.btn.classList.remove('on'); setStatus('');
   try { l.rec && (l.rec.abort ? l.rec.abort() : l.rec.stop()); } catch { /* ignore */ }
 }
 function dictationHelp() {
@@ -124,31 +124,45 @@ function dictationHelp() {
   if (/Firefox/.test(ua)) return 'Firefox doesn’t support voice dictation. Use Chrome, or the microphone on your keyboard.';
   return 'This browser can’t do voice dictation here. Use Chrome, or the microphone on your keyboard.';
 }
+let SILENCE_MS = 60000;   // stop after this long with no speech at all
 function toggleDictation(btn, ta) {
   if (live && live.btn === btn) { stopDictation(); return; }
   stopDictation();
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { toast(dictationHelp()); return; }
-  const l = { btn, rec: null, silent: 0 }; live = l;
+  const l = { btn, rec: null, started: false, quickFails: 0, lastActivity: Date.now() }; live = l;
   btn.classList.add('on'); setStatus('Starting microphone…');
+  const cont = msg => toast(msg, { label: 'Continue', fn: () => toggleDictation(btn, ta) });
+  l.silenceTimer = setInterval(() => {
+    if (live === l && Date.now() - l.lastActivity > SILENCE_MS) { stopDictation(); cont('Stopped after a minute of silence.'); }
+  }, 2000);
   const run = () => {
     if (live !== l) return;
-    const rec = new SR(); l.rec = rec; let heard = false;
+    const rec = new SR(); l.rec = rec;
+    let startedAt = Date.now(), gotAny = false, next = 0, committed = '';
+    rec.lang = 'en-NZ'; rec.continuous = true; rec.interimResults = true;
     clearTimeout(l.startTimer);
-    l.startTimer = setTimeout(() => {
-      if (live === l && !l.started) { toast('The microphone didn’t start. Check the site’s microphone permission and that you’re online, or use the microphone on your keyboard.'); stopDictation(); }
+    if (!l.started) l.startTimer = setTimeout(() => {
+      if (live === l && !l.started) { stopDictation(); toast('The microphone didn’t start. Check the site’s microphone permission and that you’re online, or use the microphone on your keyboard.'); }
     }, 6000);
-    rec.lang = 'en-NZ'; rec.continuous = false; rec.interimResults = true; rec.maxAlternatives = 1;
     rec.onstart = () => { l.started = true; clearTimeout(l.startTimer); setStatus('Listening… tap the red mic to stop'); };
     rec.onresult = e => {
-      let fin = '', interim = '';
+      gotAny = true; l.lastActivity = Date.now(); l.quickFails = 0;
+      let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) fin += t; else interim += t;
+        if (e.results[i].isFinal) {
+          if (i < next) continue;                       // already added (some phones repeat results)
+          next = i + 1;
+          let piece = t.trim();
+          if (committed && piece.startsWith(committed)) piece = piece.slice(committed.length).trim();   // phone sent the whole sentence again
+          if (piece) { addSpoken(ta, piece); committed = t.trim(); }
+          setStatus('Listening… tap the red mic to stop');
+        } else interim += t;
       }
-      if (interim) setStatus('Hearing: ' + interim);
-      if (fin.trim()) { heard = true; addSpoken(ta, fin); setStatus('Listening… tap the red mic to stop'); }
+      if (interim) setStatus('Hearing: ' + interim.trim());
     };
+    rec.onspeechstart = () => { l.lastActivity = Date.now(); };
     rec.onerror = e => {
       const msgs = {
         'not-allowed': 'The microphone is blocked. Allow it in your browser’s site settings, then try again.',
@@ -158,15 +172,16 @@ function toggleDictation(btn, ta) {
         'language-not-supported': 'This language isn’t supported for dictation on this phone.',
       };
       if (e.error === 'no-speech' || e.error === 'aborted') return;
-      toast(msgs[e.error] || 'Dictation stopped (' + e.error + ').'); stopDictation();
+      stopDictation(); toast(msgs[e.error] || 'Dictation stopped (' + e.error + ').');
     };
     rec.onend = () => {
       if (live !== l) return;
-      if (heard) l.silent = 0;
-      else if (++l.silent >= 2) { toast('I didn’t hear anything. Tap the mic and try again.'); stopDictation(); return; }
-      setTimeout(run, 250);
+      // The phone ended the session on its own (it does this after a pause). Start straight away again.
+      if (!gotAny && Date.now() - startedAt < 1500) l.quickFails++; else l.quickFails = 0;
+      if (l.quickFails >= 3) { stopDictation(); cont('The microphone stopped.'); return; }
+      setTimeout(run, 200);
     };
-    try { rec.start(); } catch { toast('Couldn’t start the microphone. Tap it again.'); stopDictation(); }
+    try { rec.start(); } catch { stopDictation(); cont('Couldn’t restart the microphone.'); }
   };
   run();
 }
@@ -586,7 +601,7 @@ async function noteForm(clientId, noteId) {
   const hasContent = rec => rec.draftTranscript || [...HEAD_FIELDS, ...SECTIONS].some(([k]) => rec[k]);
   const save = (final = false) => {
     if (deleted) return Promise.resolve(null);
-    stopDictation();
+    if (final) stopDictation();                     // autosave must never switch the microphone off
     const rec = build(final);                       // read the screen now, write after
     if (!final && !currentId && !hasContent(rec)) return Promise.resolve(null);
     const p = chain.then(async () => {
