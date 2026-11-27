@@ -14,13 +14,13 @@ All data is stored on your device only (IndexedDB). GitHub Pages hosts the code,
 - Android (Chrome): open the link > menu > Install app.
 - iPhone (Safari): open the link > Share > Add to Home Screen.
 
-## Quick dictation
-- Tap the big mic once. It keeps listening through pauses and only stops when you tap it again (or after a minute of silence, with a Continue button). Say a heading, pause, then talk. Headings: Present, Purpose, Child sighted, General, Attachment parenting, Safety wellbeing, CFP, Services, Plan.
-- If you don't want to pause, say the word "heading" first, for example "heading plan call the provider". Saying "plan colon ..." still works too.
-- Say "bullet point" to start a new bullet. Anything said before the first heading goes under General.
-- Tap Sort into sections. Tap Undo on the message at the bottom if you don't like the result.
+## Guided note (no voice commands)
+- Tap New note and the app walks you through one heading at a time: Present, Purpose, Child sighted, General, Attachment/Parenting, Safety/Wellbeing, CFP, Services, Plan.
+- On each screen tap the big mic and just talk. Every pause becomes a new bullet. The button says Skip when a step is empty and Next when it has something.
+- Present autofills: each client has a "usually present" list (set it on the client's Edit page, or tap "Make this the usual group" on the Present step). Tap names on or off, or add someone new. People you add are remembered as suggestions for that client.
+- Child sighted is two big Yes / No buttons.
+- The last step opens a Review screen with everything editable, then Save note, Save as Word, or Send to my email. Opening an old note goes straight to Review.
 - "Professional wording" tidies casual speech into note-style language (fixed rules on your phone, not AI). Untick it to keep your exact words.
-- Child sighted has a Yes / No switch in its box.
 
 ## Completion indicator
 - The note screen shows a live "x of 9" bar and tappable section chips that tick off as you fill them in (tap a chip to jump to that section).

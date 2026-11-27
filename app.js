@@ -39,16 +39,29 @@ const appendText = (a, b) => {
   if (!a.trim()) return b;
   return a.endsWith('\n') ? a + b : a.replace(/\s+$/, '') + ' ' + b;
 };
+const splitNames = str => { const out = []; for (const x of String(str || '').split(',').map(v => v.trim()).filter(Boolean)) if (!out.some(o => o.toLowerCase() === x.toLowerCase())) out.push(x); return out; };
 const toDateInput = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const fmtD = ms => new Date(ms).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 /** Adds dictated text. In bullet boxes, saying "next point" starts a new line. */
 function addSpoken(ta, text) {
   const t = (text || '').trim(); if (!t) return;
   const notify = () => ta.dispatchEvent(new Event('input', { bubbles: true }));
-  if (ta.id === 'quick') { ta.value = ta.value.trim() ? ta.value.replace(/\s+$/, '') + '\n' + t : t; notify(); return; }
-  if (ta.tagName !== 'TEXTAREA') { ta.value = appendText(ta.value, t); notify(); return; }
-  const parts = t.split(/\b(?:bullet point|next point|new bullet|next bullet)\b[,.]?\s*/i).map(x => x.trim());
-  ta.value = parts.reduce((acc, p, i) => i === 0 ? (p ? appendText(acc, p) : acc) : acc.replace(/\s+$/, '') + '\n' + p, ta.value);
+  const polish = localStorage.getItem('cf_polish') !== '0';
+  if (ta.tagName !== 'TEXTAREA') {
+    ta.value = ta.value.trim() ? appendText(ta.value, t) : (polish ? professionalise(t) : t.charAt(0).toUpperCase() + t.slice(1));
+    notify(); return;
+  }
+  // every pause in your speech becomes its own bullet
+  for (const part of t.split(BULLET_RE)) {
+    for (const sent of part.replace(/([.!?])\s+/g, '$1\u0001').split('\u0001')) {
+      for (let p of breakLong(sent.trim())) {
+        p = p.replace(/\b(?:um+|uh+|erm)\b[,]?\s*/gi, '').replace(/^[,;:\s]+|[.!?,;:\s]+$/g, '').trim();
+        if (p.length < 2) continue;
+        p = polish ? professionalise(p) : p.charAt(0).toUpperCase() + p.slice(1);
+        ta.value = ta.value.trim() ? ta.value.replace(/\s+$/, '') + '\n' + p : p;
+      }
+    }
+  }
   notify();
 }
 
@@ -186,20 +199,7 @@ function toggleDictation(btn, ta) {
   run();
 }
 
-/* ================= Dictation sorting: say a heading, pause, then talk ================= */
-const HEAD_PATTERNS = [
-  ['present', /(?:those\s+)?present|attendees|in attendance/],
-  ['purpose', /purpose(?:\s+of\s+(?:the\s+)?(?:visit|meeting|contact))?/],
-  ['childSighted', /(?:child|children|tamariki|baby)\s+(?:sighted|sited|cited|sight)|sighted/],
-  ['general', /general/],
-  ['attachmentParenting', /attachment(?:[\s,/-]+(?:and\s+)?parenting)?|parenting/],
-  ['safetyWellbeing', /safety(?:[\s,/-]+(?:and\s+)?well[\s-]?being)?|well[\s-]?being/],
-  ['cfp', /c\.?\s?f\.?\s?p\.?|see\s+f\s*p/],
-  ['services', /services?/],
-  ['plan', /plan/],
-];
-const HEAD_ALL = HEAD_PATTERNS.map(([, re]) => '(?:' + re.source + ')').join('|');
-const headKey = str => { const t = str.toLowerCase().trim(); for (const [k, re] of HEAD_PATTERNS) if (new RegExp('^(?:' + re.source + ')$').test(t)) return k; return null; };
+/* ================= Helpers for splitting dictation into bullets ================= */
 const BULLET_RE = /\b(?:bullet point|next point|new bullet|next bullet)\b[,.]?\s*/gi;
 function breakLong(seg) {
   const words = seg.split(/\s+/);
@@ -212,38 +212,6 @@ function breakLong(seg) {
   if (best < 0) best = Math.floor(mid);
   const tidy = x => x.replace(/[,;]+$/, '').trim();
   return [...breakLong(tidy(words.slice(0, best).join(' '))), ...breakLong(words.slice(best).join(' ').replace(/^(and|then|but|also)\s+/i, ''))];
-}
-/** Reads the dictation box. A heading is a line that is only the heading name (say it, pause, then talk),
- *  or "heading plan ...", or the older "plan colon ...". Anything before the first heading goes to General. */
-function parseDictation(text, polish) {
-  const clean = String(text).replace(/\bcolon\b/gi, ':').replace(/\bslash\b/gi, '/');
-  const out = {}; let cur = 'general', headings = 0;
-  const addText = (key, raw) => {
-    for (const part of raw.split(BULLET_RE)) {
-      for (const sent of part.replace(/([.!?])\s+/g, '$1\u0001').split('\u0001')) {
-        for (let p of breakLong(sent.trim())) {
-          p = p.replace(/\b(?:um+|uh+|erm)\b[,]?\s*/gi, '').replace(/^[,;:\s]+|[.!?,;:\s]+$/g, '').trim();
-          if (p.length < 2) continue;
-          p = polish ? professionalise(p) : p.charAt(0).toUpperCase() + p.slice(1);
-          (out[key] = out[key] || []).push(p);
-        }
-      }
-    }
-  };
-  const markers = new RegExp('\\bheading\\s+(' + HEAD_ALL + ')\\b|\\b(' + HEAD_ALL + ')\\s*:', 'gi');
-  for (let line of clean.split(/\n+/)) {
-    line = line.trim(); if (!line) continue;
-    const whole = headKey(line.toLowerCase().replace(/[.,;:!?]+/g, ' ').replace(/\bheading\b/g, ' ').replace(/\s+/g, ' ').trim());
-    if (whole) { cur = whole; headings++; continue; }
-    let last = 0;
-    for (const m of line.matchAll(markers)) {
-      addText(cur, line.slice(last, m.index));
-      cur = headKey((m[1] || m[2]).replace(/\s+/g, ' ')) || cur; headings++;
-      last = m.index + m[0].length;
-    }
-    addText(cur, line.slice(last));
-  }
-  return { out, headings };
 }
 
 /* ================= Professional wording (rule-based, on this phone) ================= */
@@ -504,11 +472,12 @@ async function clientForm(id) {
       <div><label for="name">Name</label><input id="name" type="text" required autocomplete="off" value="${esc(c?.name)}"></div>
       <div><label for="cn">Cultural name or iwi (optional)</label><input id="cn" type="text" autocomplete="off" value="${esc(c?.culturalName)}"></div>
       <div><label for="pr">Pronouns (optional)</label><input id="pr" type="text" autocomplete="off" value="${esc(c?.pronouns)}"></div>
+      <div><label for="up">Usually present (fills each new note)</label><input id="up" type="text" autocomplete="off" placeholder="SW, Mum, Nana" value="${esc((c?.usualPresent ?? ['SW']).join(', '))}"></div>
       <div><label for="nt">Background notes</label><textarea id="nt" rows="4" style="padding-right:.8rem">${esc(c?.notes)}</textarea></div>
       <button class="btn" type="submit">Save client</button></form>`;
   $('#cf').onsubmit = async e => {
     e.preventDefault();
-    const rec = { ...(c || {}), name: $('#name').value.trim(), culturalName: $('#cn').value.trim(), pronouns: $('#pr').value.trim(), notes: $('#nt').value.trim() };
+    const rec = { ...(c || {}), name: $('#name').value.trim(), culturalName: $('#cn').value.trim(), pronouns: $('#pr').value.trim(), notes: $('#nt').value.trim(), usualPresent: splitNames($('#up').value) };
     const newId = await DB.put('clients', rec);
     location.hash = `#/client/${c ? id : newId}`;
   };
@@ -537,145 +506,194 @@ async function clientView(id) {
 }
 
 let leaveNote = null;
+const STEP_PROMPTS = {
+  present: 'Who was there?', purpose: 'Why were you visiting?', childSighted: 'Did you see the child?',
+  general: 'What happened during the visit?', attachmentParenting: 'How are the caregiver and child together?',
+  safetyWellbeing: 'How are the child’s safety and wellbeing?', cfp: 'Anything to note for CFP?',
+  services: 'Which services or agencies are involved?', plan: 'What happens next?',
+};
+const STEP_LABEL = Object.fromEntries([...HEAD_FIELDS.map(([k, l]) => [k, l]), ...SECTIONS]);
+
 async function noteForm(clientId, noteId) {
   const c = await DB.get('clients', clientId);
   if (!c) { location.hash = '#/'; return; }
   const n = noteId ? await DB.get('notes', noteId) : null;
   const legacy = ['presentingNeed', 'korero', 'strengths', 'actions', 'culturalConsiderations', 'followUp'];
-  const val = k => {
-    if (!n) return '';
-    if (k === 'general' && !('general' in n)) return legacy.map(x => n[x]).filter(Boolean).join('\n');
-    return n[k] ?? '';
-  };
   const today = toDateInput(Date.now());
-  const dateVal = n?.visitDate || (n ? toDateInput(n.dateTime) : today);
-  let currentId = n?.id, dirty = false, deleted = false, timer = null, chain = Promise.resolve();
-  const sect = (k, l, inner, extra = '') => `<div class="sect s-${k}" id="w-${k}"><div class="shead"><label for="f-${k}">${l}</label>${extra}<span class="tick" aria-hidden="true">${ICON_CHECK}</span></div>${inner}${micBtn('f-' + k, 'Dictate ' + l)}</div>`;
-  app.innerHTML = `${head(noteId ? 'Edit note' : 'New note', `#/client/${clientId}`, `<button class="btn small ghost danger-text" id="delnote" type="button"${noteId ? '' : ' hidden'}>Delete</button>`)}
-    <p class="sub">${esc(c.name)} · <span id="saveState">Autosave on</span></p>
-    <form id="nf" class="stack">
-      <div class="progress" id="prog" role="status"><div class="ptext"><strong id="pcount"></strong><span id="plabel"></span></div><div class="pbar"><i id="pfill"></i></div>
-        <div class="chips">${FIELD_KEYS.map(k => `<button type="button" class="chip" data-k="${k}">${ICON_CHECK}${CHIP_LABELS[k]}</button>`).join('')}</div></div>
-      <section class="card talk">
-        <h2>Quick dictation</h2>
-        <p class="hint">Tap the mic. Say a heading, pause, then talk. Headings: Present, Purpose, Child sighted, General, Attachment parenting, Safety wellbeing, CFP, Services, Plan. Say “bullet point” for a new bullet.</p>
-        <button type="button" class="orb" id="orb" data-for="quick" aria-label="Start talking"><span class="ring"></span><span class="ring r2"></span>${ICON_MIC}</button>
-        <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-        <textarea id="quick" rows="5" placeholder="Your words appear here. You can edit them.">${esc(n?.draftTranscript || '')}</textarea>
-        <label class="switchrow compact"><input type="checkbox" id="polish"${localStorage.getItem('cf_polish') === '0' ? '' : ' checked'}><span>Professional wording</span></label>
-        <button type="button" class="btn" id="sort">Sort into sections</button>
-      </section>
-      <div class="sect"><div class="shead"><label for="f-visitDate">Date</label></div><input id="f-visitDate" type="date" required value="${dateVal}"></div>
-      ${HEAD_FIELDS.map(([k, l, ph]) => sect(k, l, `<input id="f-${k}" type="text" autocomplete="off" placeholder="${ph}" value="${esc(val(k))}">`, k === 'childSighted' ? '<div class="seg" id="yn" role="radiogroup" aria-label="Child sighted"><button type="button" role="radio" data-v="Yes">Yes</button><button type="button" role="radio" data-v="No">No</button></div>' : '')).join('')}
-      ${SECTIONS.map(([k, l]) => sect(k, l, `<textarea id="f-${k}" rows="4" placeholder="One point per line. Each line becomes a bullet.">${esc(val(k))}</textarea>`)).join('')}
-      <button class="btn" type="submit">Save note</button>
-      <div class="actions"><button type="button" class="btn ghost" id="wordbtn">Save as Word</button><button type="button" class="btn ghost" id="sendbtn">Send to my email</button></div>
-    </form>`;
+  const vals = { visitDate: n?.visitDate || (n ? toDateInput(n.dateTime) : today) };
+  for (const k of FIELD_KEYS) vals[k] = n ? ((k === 'general' && !('general' in n)) ? legacy.map(x => n[x]).filter(Boolean).join('\n') : (n[k] ?? '')) : '';
+  if (!n) vals.present = (c.usualPresent ?? ['SW']).join(', ');           // autofill Present
+  let currentId = n?.id, dirty = false, deleted = false, userEdited = false, timer = null, chain = Promise.resolve();
+  let mode = n ? 'review' : 'guide', step = 0, saveText = 'Autosave on'; const extraNames = [];
+  const total = FIELD_KEYS.length;
 
-  const refresh = () => {
-    let done = 0;
-    for (const k of FIELD_KEYS) {
-      const ok = $('#f-' + k).value.trim() !== ''; if (ok) done++;
-      $('#w-' + k).classList.toggle('filled', ok); $(`.chip[data-k="${k}"]`).classList.toggle('done', ok);
-    }
-    $('#pcount').textContent = `${done} of ${FIELD_KEYS.length}`;
-    $('#plabel').textContent = done === FIELD_KEYS.length ? 'Complete, ready to send' : 'sections filled';
-    $('#pfill').style.width = (done / FIELD_KEYS.length * 100) + '%';
-    $('#prog').classList.toggle('complete', done === FIELD_KEYS.length);
-    const yn = $('#f-childSighted').value.trim().toLowerCase();
-    $$('#yn button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.v.toLowerCase() === yn)));
-  };
-
-  /* ---- autosave ---- */
-  const setState = t => { const el = $('#saveState'); if (el) el.textContent = t; };
-  const build = final => {
-    const rec = { ...(n || {}), clientId };
-    rec.visitDate = $('#f-visitDate').value || today;
-    rec.dateTime = new Date(rec.visitDate + 'T12:00:00').getTime();
-    for (const [k] of [...HEAD_FIELDS, ...SECTIONS]) rec[k] = $('#f-' + k).value.trim();
-    const q = $('#quick').value.trim();
-    if (final && q) { rec.general = rec.general ? rec.general + '\n' + q : q; $('#f-general').value = rec.general; $('#quick').value = ''; rec.draftTranscript = ''; refresh(); }
-    else rec.draftTranscript = q;
+  /* ---- autosave (reads the values, never the screen) ---- */
+  const setState = t => { saveText = t; const el = $('#saveState'); if (el) el.textContent = t; };
+  const build = () => {
+    const rec = { ...(n || {}), clientId }; delete rec.draftTranscript;
+    rec.visitDate = vals.visitDate || today; rec.dateTime = new Date(rec.visitDate + 'T12:00:00').getTime();
+    for (const k of FIELD_KEYS) rec[k] = (vals[k] || '').trim();
     return rec;
   };
-  const hasContent = rec => rec.draftTranscript || [...HEAD_FIELDS, ...SECTIONS].some(([k]) => rec[k]);
+  const learnPresent = async str => {
+    const fresh = await DB.get('clients', clientId); if (!fresh) return;
+    const usual = fresh.usualPresent ?? ['SW'], known = fresh.knownPresent || [], has = (list, x) => list.some(u => u.toLowerCase() === x.toLowerCase());
+    const add = splitNames(str).filter(x => !has(usual, x) && !has(known, x));
+    if (add.length) await DB.put('clients', { ...fresh, knownPresent: [...known, ...add] });
+  };
   const save = (final = false) => {
     if (deleted) return Promise.resolve(null);
-    if (final) stopDictation();                     // autosave must never switch the microphone off
-    const rec = build(final);                       // read the screen now, write after
-    if (!final && !currentId && !hasContent(rec)) return Promise.resolve(null);
+    if (final) stopDictation();
+    if (!final && !currentId && !userEdited) return Promise.resolve(null);
+    const rec = build();
+    if (!final && !currentId && !FIELD_KEYS.some(k => rec[k])) return Promise.resolve(null);
     const p = chain.then(async () => {
       if (deleted) return null;
       if (currentId) rec.id = currentId;
       currentId = await DB.put('notes', rec); rec.id = currentId; dirty = false;
       setState('Saved ' + new Date().toLocaleTimeString('en-NZ', { hour: 'numeric', minute: '2-digit' }));
       const del = $('#delnote'); if (del) del.hidden = false;
+      if (final) await learnPresent(rec.present);
       return rec;
     }).catch(() => { setState('Couldn’t autosave. Tap Save note.'); return null; });
     chain = p; return p;
   };
   const queueSave = () => { dirty = true; setState('Saving…'); clearTimeout(timer); timer = setTimeout(() => save(false), 700); };
+  const change = (k, v) => { vals[k] = v; userEdited = true; queueSave(); };
   const flush = () => { clearTimeout(timer); return dirty && !deleted ? save(false) : chain; };
   const onHide = () => { if (document.hidden) flush(); };
-  document.addEventListener('visibilitychange', onHide);
-  window.addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', onHide); window.addEventListener('pagehide', flush);
   leaveNote = () => { document.removeEventListener('visibilitychange', onHide); window.removeEventListener('pagehide', flush); return flush(); };
 
-  $('#nf').addEventListener('input', () => { refresh(); queueSave(); });
-  $$('.chip').forEach(ch => ch.onclick = () => {
-    const w = $('#w-' + ch.dataset.k);
-    w.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
-    $('#f-' + ch.dataset.k).focus({ preventScroll: true });
-  });
-  $$('#yn button').forEach(b => b.onclick = () => {
-    if (navigator.vibrate) navigator.vibrate(8);
-    const el = $('#f-childSighted'); el.value = el.value.trim().toLowerCase() === b.dataset.v.toLowerCase() ? '' : b.dataset.v;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  refresh();
-  $$('.mic, .orb').forEach(b => b.onclick = () => { if (navigator.vibrate) navigator.vibrate(8); toggleDictation(b, $('#' + b.dataset.for)); });
-  $('#polish').onchange = e => localStorage.setItem('cf_polish', e.target.checked ? '1' : '0');
-  $('#sort').onclick = () => {
+  const orbHtml = '<button type="button" class="orb" id="orb" data-for="g-in" aria-label="Start talking"><span class="ring"></span><span class="ring r2"></span>' + ICON_MIC + '</button><div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>';
+  const wire = () => $$('.mic, .orb').forEach(b => b.onclick = () => { if (navigator.vibrate) navigator.vibrate(8); toggleDictation(b, $('#' + b.dataset.for)); });
+
+  /* ---- guided walk-through: one heading at a time ---- */
+  function drawGuide() {
     stopDictation();
-    const text = $('#quick').value.trim();
-    if (!text) { toast('Say or type something first.'); return; }
-    const { out, headings } = parseDictation(text, $('#polish').checked);
-    if (!Object.keys(out).length) { toast('Nothing to sort.'); return; }
-    const keys = [...HEAD_FIELDS, ...SECTIONS].map(x => x[0]);
-    const snap = Object.fromEntries(keys.map(k => [k, $('#f-' + k).value])); snap.quick = $('#quick').value;
-    for (const k of ['present', 'purpose']) {
-      if (!out[k]) continue; const el = $('#f-' + k), v = out[k].join(', ');
-      el.value = el.value.trim() ? el.value.trim() + ', ' + v : v;
+    const key = FIELD_KEYS[step];
+    let body = '';
+    if (key === 'present') {
+      body = `<div class="pchips" id="pchips"></div>
+        <div class="padd"><input id="padd" type="text" autocomplete="off" placeholder="Add someone"><button type="button" class="btn ghost" id="paddbtn">Add</button></div>
+        <p class="muted" id="ppreview"></p>
+        <button type="button" class="linkbtn" id="premember">Make this the usual group for ${esc(c.name)}</button>`;
+    } else if (key === 'childSighted') {
+      body = '<div class="bigyn" role="radiogroup" aria-label="Child sighted"><button type="button" role="radio" data-v="Yes">Yes</button><button type="button" role="radio" data-v="No">No</button></div>';
+    } else if (key === 'purpose') {
+      body = `${orbHtml}<input id="g-in" type="text" autocomplete="off" placeholder="e.g. first home visit" value="${esc(vals[key])}">`;
+    } else {
+      body = `${orbHtml}<textarea id="g-in" rows="6" placeholder="Your words appear here, one bullet per line. You can edit them.">${esc(vals[key])}</textarea>
+        <label class="switchrow compact"><input type="checkbox" id="polish"${localStorage.getItem('cf_polish') === '0' ? '' : ' checked'}><span>Professional wording</span></label>`;
     }
-    if (out.childSighted) {
-      const first = out.childSighted[0], yn = /^yes\b/i.test(first) ? 'Yes' : /^(no|not)\b/i.test(first) ? 'No' : '';
-      const el = $('#f-childSighted');
-      if (yn) { el.value = yn; const extra = [first.replace(/^(yes|no|not)\b[,\s]*/i, ''), ...out.childSighted.slice(1)].filter(Boolean); if (extra.length) out.general = [...(out.general || []), ...extra]; }
-      else if (!el.value.trim()) el.value = out.childSighted.join(', ');
+    app.innerHTML = `${head('New note', `#/client/${clientId}`)}
+      <p class="sub">${esc(c.name)} · <span id="saveState">${esc(saveText)}</span></p>
+      <div class="gprog"><div class="gtext"><strong>Step ${step + 1} of ${total}</strong><span>${STEP_LABEL[key]}</span></div><div class="pbar"><i style="width:${(step + 1) / total * 100}%"></i></div></div>
+      <section class="card gstep ${SECTIONS.some(([k]) => k === key) ? 's-' + key : ''}"><h2>${STEP_LABEL[key]}</h2><p class="hint">${STEP_PROMPTS[key]}</p>${body}</section>
+      <div class="gnav"><button type="button" class="btn ghost" id="gback">Back</button><button type="button" class="btn" id="gnext"></button></div>
+      <button type="button" class="linkbtn" id="greview">Skip to review</button>`;
+    const nextBtn = $('#gnext');
+    const syncNext = () => { nextBtn.textContent = step === total - 1 ? 'Review' : (vals[key] || '').trim() ? 'Next' : 'Skip'; };
+    syncNext();
+    $('#gback').onclick = () => { if (step > 0) { step--; drawGuide(); } else location.hash = `#/client/${clientId}`; };
+    nextBtn.onclick = () => { if (step < total - 1) { step++; drawGuide(); } else { mode = 'review'; draw(); } };
+    $('#greview').onclick = () => { mode = 'review'; draw(); };
+    wire();
+    const gi = $('#g-in');
+    if (gi) gi.addEventListener('input', () => { change(key, gi.value); syncNext(); });
+    const pol = $('#polish'); if (pol) pol.onchange = e => localStorage.setItem('cf_polish', e.target.checked ? '1' : '0');
+    if (key === 'childSighted') {
+      const paint = () => $$('.bigyn button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.v.toLowerCase() === (vals.childSighted || '').trim().toLowerCase())));
+      paint();
+      $$('.bigyn button').forEach(b => b.onclick = () => { if (navigator.vibrate) navigator.vibrate(8); change('childSighted', (vals.childSighted || '').toLowerCase() === b.dataset.v.toLowerCase() ? '' : b.dataset.v); paint(); syncNext(); });
     }
-    for (const [k] of SECTIONS) {
-      if (!out[k]) continue; const el = $('#f-' + k);
-      el.value = (el.value.trim() ? el.value.replace(/\s+$/, '') + '\n' : '') + out[k].join('\n');
+    if (key === 'present') {
+      const sel = new Set(splitNames(vals.present).map(x => x.toLowerCase()));
+      const options = () => { const out = []; for (const x of [...(c.usualPresent ?? ['SW']), ...(c.knownPresent || []), ...splitNames(vals.present), ...extraNames]) if (x && !out.some(o => o.toLowerCase() === x.toLowerCase())) out.push(x); return out; };
+      const paint = () => {
+        const opts = options();
+        $('#pchips').innerHTML = opts.map(o => `<button type="button" class="pchip" aria-pressed="${sel.has(o.toLowerCase())}" data-n="${esc(o)}">${esc(o)}</button>`).join('');
+        const chosen = opts.filter(o => sel.has(o.toLowerCase()));
+        $('#ppreview').textContent = chosen.length ? 'Present: ' + chosen.join(', ') : 'Nobody selected yet.';
+        $$('.pchip').forEach(b => b.onclick = () => { const k = b.dataset.n.toLowerCase(); sel.has(k) ? sel.delete(k) : sel.add(k); change('present', options().filter(o => sel.has(o.toLowerCase())).join(', ')); paint(); syncNext(); });
+        syncNext();
+      };
+      const addName = () => {
+        const v = $('#padd').value.trim(); if (!v) return;
+        if (!options().some(o => o.toLowerCase() === v.toLowerCase())) extraNames.push(v);
+        sel.add(v.toLowerCase()); change('present', options().filter(o => sel.has(o.toLowerCase())).join(', ')); $('#padd').value = ''; paint();
+      };
+      $('#paddbtn').onclick = addName; $('#padd').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addName(); } });
+      $('#premember').onclick = async () => {
+        const fresh = await DB.get('clients', clientId);
+        await DB.put('clients', { ...fresh, usualPresent: splitNames(vals.present) }); c.usualPresent = splitNames(vals.present);
+        toast(`Saved. New notes for ${c.name} will start with these people.`);
+      };
+      paint();
     }
-    $('#quick').value = '';
-    $('#nf').dispatchEvent(new Event('input'));
-    toast(headings ? 'Sorted into sections.' : 'No headings heard, so everything went under General.', {
-      label: 'Undo', fn: () => { for (const k of keys) $('#f-' + k).value = snap[k]; $('#quick').value = snap.quick; $('#nf').dispatchEvent(new Event('input')); }
+  }
+
+  /* ---- review: everything on one screen, editable ---- */
+  function drawReview() {
+    stopDictation();
+    const sect = (k, l, inner, extra = '') => `<div class="sect s-${k}" id="w-${k}"><div class="shead"><label for="f-${k}">${l}</label>${extra}<span class="tick" aria-hidden="true">${ICON_CHECK}</span></div>${inner}${micBtn('f-' + k, 'Dictate ' + l)}</div>`;
+    app.innerHTML = `${head('Review note', `#/client/${clientId}`, `<button class="btn small ghost danger-text" id="delnote" type="button"${currentId ? '' : ' hidden'}>Delete</button>`)}
+      <p class="sub">${esc(c.name)} · <span id="saveState">${esc(saveText)}</span></p>
+      <form id="nf" class="stack">
+        <div class="progress" id="prog" role="status"><div class="ptext"><strong id="pcount"></strong><span id="plabel"></span></div><div class="pbar"><i id="pfill"></i></div>
+          <div class="chips">${FIELD_KEYS.map(k => `<button type="button" class="chip" data-k="${k}">${ICON_CHECK}${CHIP_LABELS[k]}</button>`).join('')}</div></div>
+        ${!n ? '<button type="button" class="btn ghost" id="tosteps">Back to steps</button>' : ''}
+        <div class="sect"><div class="shead"><label for="f-visitDate">Date</label></div><input id="f-visitDate" type="date" required value="${esc(vals.visitDate)}"></div>
+        ${HEAD_FIELDS.map(([k, l, ph]) => sect(k, l, `<input id="f-${k}" type="text" autocomplete="off" placeholder="${ph}" value="${esc(vals[k])}">`, k === 'childSighted' ? '<div class="seg" id="yn" role="radiogroup" aria-label="Child sighted"><button type="button" role="radio" data-v="Yes">Yes</button><button type="button" role="radio" data-v="No">No</button></div>' : '')).join('')}
+        ${SECTIONS.map(([k, l]) => sect(k, l, `<textarea id="f-${k}" rows="4" placeholder="One point per line. Each line becomes a bullet.">${esc(vals[k])}</textarea>`)).join('')}
+        <button class="btn" type="submit">Save note</button>
+        <div class="actions"><button type="button" class="btn ghost" id="wordbtn">Save as Word</button><button type="button" class="btn ghost" id="sendbtn">Send to my email</button></div>
+      </form>`;
+    const refresh = () => {
+      let done = 0;
+      for (const k of FIELD_KEYS) {
+        const ok = (vals[k] || '').trim() !== ''; if (ok) done++;
+        $('#w-' + k).classList.toggle('filled', ok); $(`.chip[data-k="${k}"]`).classList.toggle('done', ok);
+      }
+      $('#pcount').textContent = `${done} of ${total}`;
+      $('#plabel').textContent = done === total ? 'Complete, ready to send' : 'sections filled';
+      $('#pfill').style.width = (done / total * 100) + '%';
+      $('#prog').classList.toggle('complete', done === total);
+      const yn = (vals.childSighted || '').trim().toLowerCase();
+      $$('#yn button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.v.toLowerCase() === yn)));
+    };
+    $('#nf').addEventListener('input', e => {
+      const id = e.target.id || '';
+      if (id === 'f-visitDate') change('visitDate', e.target.value);
+      else if (id.startsWith('f-')) change(id.slice(2), e.target.value);
+      refresh();
     });
-  };
-  $('#nf').onsubmit = async e => { e.preventDefault(); await save(true); location.hash = `#/client/${clientId}`; };
-  $('#wordbtn').onclick = async () => {
-    const rec = await save(true); if (!rec) return;
-    download(docxName(rec, c), buildDocx(rec), DOCX_MIME);
-    toast('Saved as Word in your Downloads.');
-  };
-  $('#sendbtn').onclick = async () => { const rec = await save(true); if (rec) await sendWord(rec, c); };
-  $('#delnote').onclick = async () => {
-    if (!await confirmBox('Delete this note? This can’t be undone.')) return;
-    deleted = true; clearTimeout(timer);
-    await chain; if (currentId) await DB.del('notes', currentId);
-    location.hash = `#/client/${clientId}`;
-  };
+    $$('.chip').forEach(ch => ch.onclick = () => {
+      $('#w-' + ch.dataset.k).scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+      $('#f-' + ch.dataset.k).focus({ preventScroll: true });
+    });
+    $$('#yn button').forEach(b => b.onclick = () => {
+      if (navigator.vibrate) navigator.vibrate(8);
+      const el = $('#f-childSighted'); el.value = el.value.trim().toLowerCase() === b.dataset.v.toLowerCase() ? '' : b.dataset.v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    wire(); refresh();
+    const ts = $('#tosteps'); if (ts) ts.onclick = () => { mode = 'guide'; step = 0; draw(); };
+    $('#nf').onsubmit = async e => { e.preventDefault(); await save(true); location.hash = `#/client/${clientId}`; };
+    $('#wordbtn').onclick = async () => {
+      const rec = await save(true); if (!rec) return;
+      download(docxName(rec, c), buildDocx(rec), DOCX_MIME); toast('Saved as Word in your Downloads.');
+    };
+    $('#sendbtn').onclick = async () => { const rec = await save(true); if (rec) await sendWord(rec, c); };
+    $('#delnote').onclick = async () => {
+      if (!await confirmBox('Delete this note? This can’t be undone.')) return;
+      deleted = true; clearTimeout(timer);
+      await chain; if (currentId) await DB.del('notes', currentId);
+      location.hash = `#/client/${clientId}`;
+    };
+  }
+  const draw = () => mode === 'guide' ? drawGuide() : drawReview();
+  draw();
 }
 
 async function remindersView() {

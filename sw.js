@@ -1,4 +1,4 @@
-const CACHE = 'caseflow-v8';
+const CACHE = 'caseflow-v9';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png'];
 

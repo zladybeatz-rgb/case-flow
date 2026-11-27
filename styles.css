@@ -277,3 +277,30 @@ input[type=checkbox] { accent-color: var(--brand); }
 .switchrow.compact { align-items: center; padding: .5rem .75rem; margin: 0; width: 100%; text-align: left; }
 .switchrow.compact input { margin-top: 0; }
 #toast button { background: none; border: 0; color: var(--soft); font: 700 1rem var(--sans); text-decoration: underline; padding: .3rem .4rem; cursor: pointer; }
+
+/* ===== Guided walk-through ===== */
+.gprog { margin: .25rem 0 .9rem; }
+.gtext { display: flex; justify-content: space-between; align-items: baseline; color: var(--muted); font-size: .9rem; }
+.gtext strong { font: 600 1.15rem var(--serif); color: var(--ink); }
+.gprog .pbar { margin: .4rem 0 0; }
+.gstep { display: grid; justify-items: center; gap: .8rem; text-align: center; padding: 1.4rem 1.1rem; background: linear-gradient(180deg, var(--soft), var(--surface)); }
+.gstep[class*="s-"] { border-left: 4px solid var(--accent); }
+.gstep h2 { margin: 0; font-size: 1.6rem; }
+.gstep .hint { margin: 0; font-size: 1rem; }
+.gstep textarea, .gstep input[type=text] { text-align: left; padding-right: .8rem; width: 100%; background: var(--surface); }
+.gstep textarea { min-height: 9rem; }
+.gnav { display: flex; gap: .7rem; margin-top: 1rem; }
+.gnav .btn { flex: 1; min-height: 54px; font-size: 1.05rem; }
+.gnav #gback { flex: 0 0 32%; }
+.linkbtn { background: none; border: 0; color: var(--brand); font: 600 .95rem var(--sans); text-decoration: underline; padding: .8rem .5rem; cursor: pointer; display: block; margin: 0 auto; }
+.pchips { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; }
+.pchip { min-height: 48px; padding: 0 1.1rem; border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface); color: var(--muted); font: 600 1rem var(--sans); cursor: pointer; }
+.pchip[aria-pressed="true"] { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
+.padd { display: flex; gap: .5rem; width: 100%; }
+.padd input { flex: 1; }
+.padd .btn { min-height: 48px; }
+.bigyn { display: flex; gap: .8rem; width: 100%; }
+.bigyn button { flex: 1; min-height: 76px; border-radius: 18px; border: 2px solid var(--line); background: var(--surface); color: var(--muted); font: 700 1.3rem var(--sans); cursor: pointer; }
+.bigyn button[aria-checked="true"][data-v="Yes"] { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
+.bigyn button[aria-checked="true"][data-v="No"] { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.gstep .switchrow.compact { justify-content: center; width: auto; }
