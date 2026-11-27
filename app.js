@@ -45,6 +45,7 @@ const fmtD = ms => new Date(ms).toLocaleDateString('en-NZ', { weekday: 'short', 
 function addSpoken(ta, text) {
   const t = (text || '').trim(); if (!t) return;
   const notify = () => ta.dispatchEvent(new Event('input', { bubbles: true }));
+  if (ta.id === 'quick') { ta.value = ta.value.trim() ? ta.value.replace(/\s+$/, '') + '\n' + t : t; notify(); return; }
   if (ta.tagName !== 'TEXTAREA') { ta.value = appendText(ta.value, t); notify(); return; }
   const parts = t.split(/\b(?:next point|new bullet|next bullet)\b[,.]?\s*/i).map(x => x.trim());
   ta.value = parts.reduce((acc, p, i) => i === 0 ? (p ? appendText(acc, p) : acc) : acc.replace(/\s+$/, '') + '\n' + p, ta.value);
@@ -87,8 +88,8 @@ const DB = {
 };
 
 /* ================= Dialogs ================= */
-function openDialog(html) {
-  const d = $('#dlg'); d.innerHTML = html; d.returnValue = ''; d.showModal(); return d;
+function openDialog(html, cls = '') {
+  const d = $('#dlg'); d.className = cls; d.innerHTML = html; d.returnValue = ''; d.showModal(); return d;
 }
 function confirmBox(msg, okLabel = 'Delete') {
   return new Promise(res => {
@@ -183,6 +184,125 @@ function parseHeadings(text) {
     add(key, v);
   });
   return out;
+}
+
+/* ================= Talk freely: on-device sorting (nothing leaves your phone) ================= */
+const DEFAULT_KEYWORDS = {
+  attachmentParenting: ['parent*:2', 'mum', 'mother', 'dad', 'father', 'caregiver*', 'bond*', 'attachment', 'cuddl*', 'comfort*', 'settl*', 'soothe*', 'respons*', 'interact*', 'play*:1', 'routine*', 'bedtime', 'boundar*', 'disciplin*', 'feeding', 'bottle', 'breastfe*', 'eye contact', 'affection*', 'nurtur*', 'attuned', 'tantrum*', 'cues', 'smil*:1', 'laugh*:1', 'relationship with'],
+  safetyWellbeing: ['safe:2', 'safety', 'unsafe:3', 'risk*', 'injur*:3', 'bruis*:3', 'harm*', 'violen*:3', 'assault*:3', 'abus*:3', 'neglect*:3', 'safe sleep:3', 'cot', 'wahakura', 'pepi pod', 'bed shar*:3', 'co-sleep*:3', 'hazard*', 'smoke alarm*:3', 'medical:1', 'doctor', 'gp', 'plunket', 'immunis*', 'health*:1', 'sick', 'illness', 'medication*', 'hungry', 'kai', 'food:1', 'fridge', 'pantry', 'clean:1', 'tidy:1', 'mould', 'damp', 'heating:1', 'hygiene', 'drug*', 'alcohol', 'meth', 'cannabis', 'substance*', 'mental health', 'depress*', 'anxi*', 'suicid*:3', 'self harm:3', 'wellbeing', 'school:1', 'attendance', 'development*:1', 'weight:1', 'growth:1', 'condition of the home:3', 'home environment'],
+  cfp: ['cfp:4', 'family plan:4', 'child and family plan:4', 'whanau plan:4', 'goal*', 'outcome*', 'milestone*:1', 'progress:1', 'review*:1'],
+  services: ['referral*', 'referred', 'service*:1', 'agency', 'agencies', 'provider*', 'support worker*', 'counsell*', 'programme*', 'program*', 'course*:1', 'budget*', 'msd', 'winz:3', 'work and income:3', 'housing', 'kainga ora:3', 'whanau ora:3', 'kaupapa maori', 'navigator*', 'swis:3', 'family start:3', 'early intervention', 'strengthening families:3', 'acc', 'foodbank*', 'food bank*', 'iwi:1', 'marae:1', 'ngo', 'barnardos:3', 'refuge:3', 'shine:3', 'kindergarten', 'early childhood', 'ece', 'daycare', 'childcare'],
+  plan: ['will:3', 'going to:3', 'plan to:3', 'next visit:3', 'next week:3', 'next fortnight:3', 'next month:3', 'tomorrow', 'follow up:3', 'follow-up:3', 'followup:3', 'agreed:1', 'to arrange:3', 'to contact:3', 'to call:3', 'to book:3', 'needs to', 'need to', 'by next:3', 'action*', 'check in', 'check-in', 'organis*', 'schedul*', 'arrange*', 'to do', 'outstanding', 'deadline*', 'to be completed:3'],
+};
+const KW_KEY = 'cf_keywords';
+function getKeywords() {
+  let saved = {}; try { saved = JSON.parse(localStorage.getItem(KW_KEY) || '{}'); } catch { /* ignore */ }
+  return { ...DEFAULT_KEYWORDS, ...saved };
+}
+const norm = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\b(i|we|he|she|they|you|it)['’]ll\b/g, '$1 will');
+function compileKeywords(map) {
+  const out = {};
+  for (const [sec, list] of Object.entries(map)) {
+    out[sec] = list.map(raw => {
+      const m = String(raw).trim().match(/^(.*?)(?::(\d))?$/); let kw = norm(m[1]).trim(); if (!kw) return null;
+      const stem = kw.endsWith('*'); if (stem) kw = kw.slice(0, -1);
+      const base = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      return { re: new RegExp('(?:^|[^a-z0-9])' + base + (stem ? '[a-z0-9]*' : '(?=$|[^a-z0-9])')), w: m[2] ? +m[2] : 2 };
+    }).filter(Boolean);
+  }
+  return out;
+}
+function breakLong(seg) {
+  const words = seg.split(/\s+/);
+  if (words.length <= 28) return [seg];
+  const mid = words.length / 2; let best = -1, bd = 1e9;
+  for (let i = 4; i < words.length - 4; i++) {
+    const w = words[i].toLowerCase().replace(/[^a-z]/g, '');
+    if (['and', 'then', 'but', 'also', 'while', 'because'].includes(w) || /,$/.test(words[i - 1])) { const d = Math.abs(i - mid); if (d < bd) { bd = d; best = i; } }
+  }
+  if (best < 0) best = Math.floor(mid);
+  const tidy = x => x.replace(/[,;]+$/, '').trim();
+  return [...breakLong(tidy(words.slice(0, best).join(' '))), ...breakLong(words.slice(best).join(' ').replace(/^(and|then|but|also)\s+/i, ''))];
+}
+function splitSentences(text) {
+  const out = [];
+  for (const block of text.split(/\r?\n+/)) {
+    for (const seg of block.replace(/([.!?])\s+/g, '$1\u0001').split('\u0001')) {
+      for (let p of breakLong(seg.trim())) {
+        p = p.replace(/\b(?:um+|uh+|erm)\b[,]?\s*/gi, '').replace(/[.!?]+$/, '').trim();
+        if (p.length > 1) out.push(p.charAt(0).toUpperCase() + p.slice(1));
+      }
+    }
+  }
+  return out;
+}
+const CHILD_RE = /\b(child|children|tamariki|tamaiti|baby|pepi|infant|toddler|boy|girl|kids?)\b/;
+function extractMeta(sentences) {
+  const meta = {}, rest = [];
+  for (const s of sentences) {
+    const n = norm(s); let m;
+    if (!meta.purpose && (m = s.match(/(?:the )?purpose (?:of (?:the|this|today['’]?s) (?:visit|meeting|contact) )?(?:was|is) (?:to )?(.+)/i))) { meta.purpose = m[1].trim(); continue; }
+    if (!meta.present && (m = s.match(/^(?:present|those present|attendees|in attendance)(?: (?:were|was|are|is))?[:\s-]+(.+)/i))) { meta.present = m[1].trim(); continue; }
+    if (!meta.present && (m = s.match(/^(.+?)\s+(?:was|were)\s+(?:also\s+)?present$/i))) { meta.present = m[1].trim(); continue; }
+    if (!meta.childSighted && CHILD_RE.test(n) && /\b(sighted|saw|seen|see|sight)\b/.test(n)) {
+      meta.childSighted = /\b(not|unable|couldn't|could not|didn't|did not|wasn't|weren't|no)\b/.test(n) ? 'No' : 'Yes';
+    }
+    rest.push(s);
+  }
+  return { meta, rest };
+}
+function classify(sentence, kw, prev) {
+  const n = norm(sentence), scores = {};
+  for (const sec of Object.keys(kw)) { let t = 0; for (const { re, w } of kw[sec]) if (re.test(n)) t += w; scores[sec] = t; }
+  let best = 'general', bs = 1;
+  for (const sec of ['plan', 'cfp', 'services', 'safetyWellbeing', 'attachmentParenting']) if ((scores[sec] || 0) > bs) { bs = scores[sec]; best = sec; }
+  if (best === 'general' && prev && prev !== 'general' && /^(he|she|they|it|this|that|also|and|but|then|their|his|her)\b/.test(n)) best = prev;
+  return best;
+}
+function sortTranscript(text) {
+  const p = parseHeadings(text);
+  const explicitKeys = Object.keys(p).filter(k => k !== 'general');
+  if (explicitKeys.length) {
+    const meta = {}, items = [];
+    for (const [k, v] of Object.entries(p)) {
+      if (['present', 'purpose', 'childSighted'].includes(k)) meta[k] = v;
+      else v.split(/\n+/).map(x => x.trim()).filter(Boolean).forEach(t => items.push({ text: t.charAt(0).toUpperCase() + t.slice(1), section: k }));
+    }
+    return { meta, items };
+  }
+  const kw = compileKeywords(getKeywords());
+  const { meta, rest } = extractMeta(splitSentences(text));
+  let prev = 'general';
+  const items = rest.map(t => { const section = classify(t, kw, prev); prev = section; return { text: t, section }; });
+  return { meta, items };
+}
+const SEC_LABEL = Object.fromEntries(SECTIONS);
+const KW_LABELS = [['attachmentParenting', 'Attachment/Parenting'], ['safetyWellbeing', 'Safety/Wellbeing'], ['cfp', 'CFP'], ['services', 'Services'], ['plan', 'Plan']];
+function openSortSheet(result, onApply) {
+  const items = result.items.map(x => ({ ...x }));
+  const opts = k => SECTIONS.map(([v, l]) => `<option value="${v}"${v === k ? ' selected' : ''}>${l}</option>`).join('') + '<option value="__remove">Remove</option>';
+  const m = result.meta;
+  const d = openDialog(`<form method="dialog"><h2>Check before filing</h2><p class="hint" id="sh-count"></p>
+    <div class="sheet-meta">
+      <label for="pm-present">Present</label><input id="pm-present" type="text" value="${esc(m.present || '')}">
+      <label for="pm-purpose">Purpose</label><input id="pm-purpose" type="text" value="${esc(m.purpose || '')}">
+      <label for="pm-sighted">Child sighted</label><select id="pm-sighted"><option value="">Not stated</option><option${m.childSighted === 'Yes' ? ' selected' : ''}>Yes</option><option${m.childSighted === 'No' ? ' selected' : ''}>No</option></select>
+    </div><div id="groups"></div>
+    <div class="row sticky"><button class="btn ghost" value="cancel">Cancel</button><button class="btn" value="ok">File into note</button></div></form>`, 'sheet');
+  const draw = () => {
+    const live = items.map((x, i) => ({ ...x, i })).filter(x => x.section !== '__remove');
+    $('#sh-count').textContent = `${live.length} point${live.length === 1 ? '' : 's'} sorted. Change any that landed in the wrong place.`;
+    $('#groups').innerHTML = SECTIONS.map(([k, l]) => {
+      const g = live.filter(x => x.section === k); if (!g.length) return '';
+      return `<section class="grp s-${k}"><header><strong>${l}</strong><span class="count">${g.length}</span></header><ul>${g.map(x => `<li><span>${esc(x.text)}</span><select data-i="${x.i}" aria-label="Move to section">${opts(k)}</select></li>`).join('')}</ul></section>`;
+    }).join('') || '<p class="empty">Nothing to file.</p>';
+    $$('#groups select').forEach(sel => sel.onchange = () => { items[+sel.dataset.i].section = sel.value; draw(); });
+  };
+  draw();
+  d.onclose = () => {
+    if (d.returnValue !== 'ok') return;
+    onApply({ meta: { present: $('#pm-present').value.trim(), purpose: $('#pm-purpose').value.trim(), childSighted: $('#pm-sighted').value }, items: items.filter(x => x.section !== '__remove') });
+  };
 }
 
 /* ================= PIN lock (screen lock, not encryption) ================= */
@@ -447,16 +567,20 @@ async function noteForm(clientId, noteId) {
   const today = toDateInput(Date.now());
   const dateVal = n?.visitDate || (n ? toDateInput(n.dateTime) : today);
   let currentId = n?.id;
-  const sect = (k, l, inner) => `<div class="sect" id="w-${k}"><div class="shead"><label for="f-${k}">${l}</label><span class="tick" aria-hidden="true">${ICON_CHECK}</span></div>${inner}${micBtn('f-' + k, 'Dictate ' + l)}</div>`;
+  const sect = (k, l, inner) => `<div class="sect s-${k}" id="w-${k}"><div class="shead"><label for="f-${k}">${l}</label><span class="tick" aria-hidden="true">${ICON_CHECK}</span></div>${inner}${micBtn('f-' + k, 'Dictate ' + l)}</div>`;
   app.innerHTML = `${head(noteId ? 'Edit note' : 'New note', `#/client/${clientId}`, noteId ? '<button class="btn small ghost danger-text" id="delnote" type="button">Delete</button>' : '')}
     <p class="sub">${esc(c.name)}</p>
     <form id="nf" class="stack">
       <div class="progress" id="prog" role="status"><div class="ptext"><strong id="pcount"></strong><span id="plabel"></span></div><div class="pbar"><i id="pfill"></i></div>
         <div class="chips">${FIELD_KEYS.map(k => `<button type="button" class="chip" data-k="${k}">${ICON_CHECK}${CHIP_LABELS[k]}</button>`).join('')}</div></div>
-      <section class="card quick"><label for="quick">Quick dictation</label>
-        <p class="hint">Tap the microphone and say each heading followed by “colon”, for example “purpose colon first home visit, general colon …”. Say “next point” to start a new bullet. Then tap Sort into sections.</p>
-        <div class="field"><textarea id="quick" rows="4"></textarea>${micBtn('quick', 'Dictate')}</div>
-        <button type="button" class="btn ghost" id="sort">Sort into sections</button></section>
+      <section class="card talk">
+        <h2>Talk freely</h2>
+        <p class="hint">Tell it about the visit in your own words and pause between thoughts. Then tap Sort and it files each point under the right heading for you to check.</p>
+        <button type="button" class="orb" id="orb" data-for="quick" aria-label="Start talking"><span class="ring"></span><span class="ring r2"></span>${ICON_MIC}</button>
+        <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+        <textarea id="quick" rows="5" placeholder="Your words appear here. You can edit them."></textarea>
+        <button type="button" class="btn" id="sort">Sort into sections</button>
+      </section>
       <div class="sect"><div class="shead"><label for="f-visitDate">Date</label></div><input id="f-visitDate" type="date" required value="${dateVal}"></div>
       ${HEAD_FIELDS.map(([k, l, ph]) => sect(k, l, `<input id="f-${k}" type="text" autocomplete="off" placeholder="${ph}" ${k === 'childSighted' ? 'list="yn"' : ''} value="${esc(val(k))}">`)).join('')}
       <datalist id="yn"><option value="Yes"><option value="No"></datalist>
@@ -482,15 +606,20 @@ async function noteForm(clientId, noteId) {
     $('#f-' + ch.dataset.k).focus({ preventScroll: true });
   });
   refresh();
-  $$('.mic').forEach(b => b.onclick = () => toggleDictation(b, $('#' + b.dataset.for)));
+  $$('.mic, .orb').forEach(b => b.onclick = () => { if (navigator.vibrate) navigator.vibrate(8); toggleDictation(b, $('#' + b.dataset.for)); });
   $('#sort').onclick = () => {
-    const parsed = parseHeadings($('#quick').value);
-    for (const [k, v] of Object.entries(parsed)) {
-      const el = $('#f-' + k); if (!el) continue;
-      if (el.tagName === 'TEXTAREA') el.value = el.value.trim() ? el.value.replace(/\s+$/, '') + '\n' + v : v;
-      else el.value = appendText(el.value, v);
-    }
-    $('#quick').value = ''; refresh(); toast('Sorted into sections.');
+    stopDictation();
+    const text = $('#quick').value.trim();
+    if (!text) { toast('Talk or type something first.'); return; }
+    openSortSheet(sortTranscript(text), res => {
+      const setIfEmpty = (k, v) => { const el = $('#f-' + k); if (v && !el.value.trim()) el.value = v; };
+      setIfEmpty('present', res.meta.present); setIfEmpty('purpose', res.meta.purpose); setIfEmpty('childSighted', res.meta.childSighted);
+      for (const [k] of SECTIONS) {
+        const lines = res.items.filter(x => x.section === k).map(x => x.text); if (!lines.length) continue;
+        const el = $('#f-' + k); el.value = el.value.trim() ? el.value.replace(/\s+$/, '') + '\n' + lines.join('\n') : lines.join('\n');
+      }
+      $('#quick').value = ''; refresh(); toast('Filed into your note.');
+    });
   };
   const persist = async () => {
     stopDictation();
@@ -543,6 +672,10 @@ async function settingsView() {
       <p class="hint">Your email address. It stays on this phone. When you tap Send to my email, it’s copied so you can paste it into the To box.</p>
       <input id="mail" type="email" autocomplete="email" aria-label="Your email address" value="${esc(localStorage.getItem('cf_email') || '')}">
       <button class="btn ghost" id="savemail" type="button">Save email</button></section>
+    <section class="section card"><h2 style="margin-top:0">Sorting words</h2>
+      <p class="hint">Talk freely sorts each sentence by the words in it. Edit the words for each section, separated by commas. A number after a word (for example plan:3) makes it count more. Anything that matches nothing goes to General.</p>
+      ${KW_LABELS.map(([k, l]) => `<details class="kw"><summary>${l}</summary><textarea id="kw-${k}" rows="6" style="padding-right:.8rem">${esc(getKeywords()[k].join(', '))}</textarea></details>`).join('')}
+      <button class="btn ghost" id="kwsave" type="button">Save words</button><button class="btn ghost" id="kwreset" type="button">Reset to defaults</button></section>
     <section class="section card"><h2 style="margin-top:0">Backup</h2>
       <p class="hint">Your data lives only on this device. If you clear browser data or change phones it’s gone, so export a backup regularly. The backup file is not encrypted, so store it somewhere private.</p>
       <button class="btn ghost" id="export" type="button">Export backup</button>
@@ -550,6 +683,11 @@ async function settingsView() {
   $('#setpin').onclick = async () => { const p = await pinDialog(); if (p) { await setPin(p); toast('PIN saved.'); settingsView(); } };
   if (hasPin()) $('#rmpin').onclick = async () => { if (await confirmBox('Remove the PIN lock?', 'Remove')) { localStorage.removeItem(PIN_KEY); settingsView(); } };
   if (perm === 'default') $('#notif').onclick = async () => { await Notification.requestPermission(); settingsView(); };
+  $('#kwsave').onclick = () => {
+    const out = {}; for (const [k] of KW_LABELS) out[k] = $('#kw-' + k).value.split(',').map(x => x.trim()).filter(Boolean);
+    localStorage.setItem(KW_KEY, JSON.stringify(out)); toast('Sorting words saved.');
+  };
+  $('#kwreset').onclick = async () => { if (await confirmBox('Reset all sorting words to the defaults?', 'Reset')) { localStorage.removeItem(KW_KEY); settingsView(); } };
   $('#savemail').onclick = () => { localStorage.setItem('cf_email', $('#mail').value.trim()); toast('Email saved.'); };
   $('#export').onclick = async () => {
     const data = { app: 'case-flow', version: 1, exportedAt: new Date().toISOString(), clients: await DB.all('clients'), notes: await DB.all('notes'), reminders: await DB.all('reminders') };
@@ -585,6 +723,7 @@ async function route() {
   for (const [re, fn] of routes) { const m = h.match(re); if (m) { await fn(m); break; } }
   const tab = h.startsWith('#/reminders') ? 'reminders' : h.startsWith('#/settings') ? 'settings' : 'clients';
   $$('#tabs a').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
+  app.classList.remove('enter'); void app.offsetWidth; app.classList.add('enter');
   window.scrollTo(0, 0);
 }
 
