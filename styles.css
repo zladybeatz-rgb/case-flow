@@ -250,3 +250,22 @@ details.kw textarea { margin-top: .4rem; }
 .enter { animation: rise .24s ease both; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 @media (prefers-reduced-motion: reduce) { .enter, .orb.on .ring, .orb.on ~ .wave i { animation: none; } }
+
+/* ===== Quick checks, autosave state, wording switch ===== */
+[hidden] { display: none !important; }
+.checks summary { font: 600 1.1rem var(--serif); cursor: pointer; list-style-position: inside; }
+.checks .hint { margin: .4rem 0 .3rem; }
+.trow { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .55rem 0; border-top: 1px solid var(--line); }
+.tlabel { flex: 1; font-size: .95rem; }
+.seg { display: inline-flex; background: var(--bg); border: 1.5px solid var(--line); border-radius: 12px; padding: 3px; gap: 2px; flex: none; }
+.seg button { min-width: 44px; min-height: 36px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font: 600 .85rem var(--sans); cursor: pointer; }
+.seg button[aria-checked="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.seg button[data-s="yes"][aria-checked="true"] { background: var(--brand); color: var(--brand-ink); }
+.seg button[data-s="no"][aria-checked="true"] { background: var(--warn-bg); color: var(--warn); }
+#saveState { color: var(--brand); font-weight: 600; }
+.switchrow { display: flex; gap: .75rem; align-items: flex-start; background: var(--bg); border-radius: 14px; padding: .75rem; margin-bottom: .8rem; font-weight: 400; }
+.switchrow input { width: 22px; height: 22px; margin-top: .15rem; flex: none; }
+.switchrow small { color: var(--muted); }
+.ed { display: block; outline: none; border-radius: 6px; padding: .1rem .2rem; margin: 0 -.2rem; }
+.ed:focus { background: color-mix(in srgb, var(--brand) 10%, transparent); }
+input[type=checkbox] { accent-color: var(--brand); }

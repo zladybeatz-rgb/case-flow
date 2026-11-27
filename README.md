@@ -19,6 +19,15 @@ All data is stored on your device only (IndexedDB). GitHub Pages hosts the code,
 - Sorting happens on your phone using keyword lists (Settings > Sorting words). Nothing is sent anywhere. It will not be perfect, which is why the preview is there.
 - Saying headings ("plan colon ...") still works if you ever want to.
 
+## Professional wording
+- When you sort a Talk freely transcript, the preview rewrites casual speech into note-style wording ("I saw the baby" becomes "SW sighted the baby", "Mum said" becomes "Mum reported that", contractions are expanded, WINZ, Kāinga Ora, whānau etc. are tidied). It uses fixed rules on your phone, not AI, so always check the meaning. Tap any line to edit it, or switch it off.
+
+## Quick checks
+- Tap Yes / No on common items (Child sighted, safe sleep space, food in the home, supervisor consulted...) to add standard wording to the right section. The dash clears it.
+
+## Autosave
+- Notes save automatically a moment after you stop typing, and when you leave the screen or switch apps. The line under the client name shows "Saved" with the time. Your Talk freely text is kept too.
+
 ## Completion indicator
 - The note screen shows a live "x of 9" bar and tappable section chips that tick off as you fill them in (tap a chip to jump to that section).
 - Notes show an amber draft count (e.g. 4/9) until all nine are filled, then a green Complete badge. The home screen counts draft notes.

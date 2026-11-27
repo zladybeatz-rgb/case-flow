@@ -279,13 +279,17 @@ function sortTranscript(text) {
 const SEC_LABEL = Object.fromEntries(SECTIONS);
 const KW_LABELS = [['attachmentParenting', 'Attachment/Parenting'], ['safetyWellbeing', 'Safety/Wellbeing'], ['cfp', 'CFP'], ['services', 'Services'], ['plan', 'Plan']];
 function openSortSheet(result, onApply) {
-  const items = result.items.map(x => ({ ...x }));
+  let polish = localStorage.getItem('cf_polish') !== '0';
+  const items = result.items.map(x => ({ section: x.section, orig: x.text, pol: professionalise(x.text), text: '', edited: false }));
+  const textOf = x => x.edited ? x.text : (polish ? x.pol : x.orig);
   const opts = k => SECTIONS.map(([v, l]) => `<option value="${v}"${v === k ? ' selected' : ''}>${l}</option>`).join('') + '<option value="__remove">Remove</option>';
   const m = result.meta;
+  const cap = v => v ? v.charAt(0).toUpperCase() + v.slice(1) : '';
   const d = openDialog(`<form method="dialog"><h2>Check before filing</h2><p class="hint" id="sh-count"></p>
+    <label class="switchrow"><input type="checkbox" id="polish"${polish ? ' checked' : ''}><span><strong>Professional wording</strong><br><small>Turns casual phrases into note-style language. Tap any line to edit it, and check the meaning before filing.</small></span></label>
     <div class="sheet-meta">
-      <label for="pm-present">Present</label><input id="pm-present" type="text" value="${esc(m.present || '')}">
-      <label for="pm-purpose">Purpose</label><input id="pm-purpose" type="text" value="${esc(m.purpose || '')}">
+      <label for="pm-present">Present</label><input id="pm-present" type="text" value="${esc(cap(m.present))}">
+      <label for="pm-purpose">Purpose</label><input id="pm-purpose" type="text" value="${esc(cap(m.purpose))}">
       <label for="pm-sighted">Child sighted</label><select id="pm-sighted"><option value="">Not stated</option><option${m.childSighted === 'Yes' ? ' selected' : ''}>Yes</option><option${m.childSighted === 'No' ? ' selected' : ''}>No</option></select>
     </div><div id="groups"></div>
     <div class="row sticky"><button class="btn ghost" value="cancel">Cancel</button><button class="btn" value="ok">File into note</button></div></form>`, 'sheet');
@@ -294,15 +298,87 @@ function openSortSheet(result, onApply) {
     $('#sh-count').textContent = `${live.length} point${live.length === 1 ? '' : 's'} sorted. Change any that landed in the wrong place.`;
     $('#groups').innerHTML = SECTIONS.map(([k, l]) => {
       const g = live.filter(x => x.section === k); if (!g.length) return '';
-      return `<section class="grp s-${k}"><header><strong>${l}</strong><span class="count">${g.length}</span></header><ul>${g.map(x => `<li><span>${esc(x.text)}</span><select data-i="${x.i}" aria-label="Move to section">${opts(k)}</select></li>`).join('')}</ul></section>`;
+      return `<section class="grp s-${k}"><header><strong>${l}</strong><span class="count">${g.length}</span></header><ul>${g.map(x => `<li><span class="ed" contenteditable="true" spellcheck="true" data-i="${x.i}">${esc(textOf(x))}</span><select data-i="${x.i}" aria-label="Move to section">${opts(k)}</select></li>`).join('')}</ul></section>`;
     }).join('') || '<p class="empty">Nothing to file.</p>';
     $$('#groups select').forEach(sel => sel.onchange = () => { items[+sel.dataset.i].section = sel.value; draw(); });
+    $$('#groups .ed').forEach(el => el.addEventListener('input', () => { const it = items[+el.dataset.i]; it.text = el.textContent.trim(); it.edited = true; }));
   };
+  $('#polish').onchange = e => { polish = e.target.checked; localStorage.setItem('cf_polish', polish ? '1' : '0'); draw(); };
   draw();
   d.onclose = () => {
     if (d.returnValue !== 'ok') return;
-    onApply({ meta: { present: $('#pm-present').value.trim(), purpose: $('#pm-purpose').value.trim(), childSighted: $('#pm-sighted').value }, items: items.filter(x => x.section !== '__remove') });
+    onApply({ meta: { present: $('#pm-present').value.trim(), purpose: $('#pm-purpose').value.trim(), childSighted: $('#pm-sighted').value }, items: items.filter(x => x.section !== '__remove' && textOf(x)).map(x => ({ text: textOf(x), section: x.section })) });
   };
+}
+
+/* ================= Professional wording (rule-based, on this phone) ================= */
+const POLISH_RULES = [
+  [/\b(?:um+|uh+|erm|you know|kind of|sort of|kinda|sorta|basically|literally|pretty much|really)\b[,]?\s*/gi, ''],
+  [/\bgonna\b/gi, 'going to'], [/\bwanna\b/gi, 'want to'], [/\bgotta\b/gi, 'have to'],
+  [/\b(?:yeah|yep|yup)\b/gi, 'yes'], [/\bnah\b/gi, 'no'], [/\bkids\b/gi, 'children'], [/\bkid\b/gi, 'child'],
+  [/\bcan['’]t\b/gi, 'cannot'], [/\bwon['’]t\b/gi, 'will not'], [/\bdon['’]t\b/gi, 'do not'], [/\bdoesn['’]t\b/gi, 'does not'],
+  [/\bdidn['’]t\b/gi, 'did not'], [/\bisn['’]t\b/gi, 'is not'], [/\baren['’]t\b/gi, 'are not'], [/\bwasn['’]t\b/gi, 'was not'],
+  [/\bweren['’]t\b/gi, 'were not'], [/\bhasn['’]t\b/gi, 'has not'], [/\bhaven['’]t\b/gi, 'have not'], [/\bhadn['’]t\b/gi, 'had not'],
+  [/\bcouldn['’]t\b/gi, 'could not'], [/\bwouldn['’]t\b/gi, 'would not'], [/\bshouldn['’]t\b/gi, 'should not'],
+  [/\b(he|she)['’]s (?!got\b|been\b|had\b|gone\b|done\b)/gi, '$1 is '], [/\bit['’]s\b/gi, 'it is'], [/\bthat['’]s\b/gi, 'that is'], [/\bthere['’]s\b/gi, 'there is'],
+  [/\b(we|they|you)['’]re\b/gi, '$1 are'], [/\b(we|they|you)['’]ve\b/gi, '$1 have'], [/\b(we|they|you|he|she)['’]ll\b/gi, '$1 will'],
+  [/\bi['’]m\b/gi, 'I am'], [/\bi['’]ve\b/gi, 'I have'], [/\bi['’]ll\b/gi, 'I will'], [/\bi['’]d\b/gi, 'I would'],
+  [/(^|[^A-Za-z’'])i(?=[^A-Za-z’']|$)/g, '$1I'],
+  // first person becomes SW
+  [/\bI saw (?=(?:the |a |their |her |his )?(?:child|children|tamariki|baby|pepi|pēpi|infant|toddler|boy|girl)\b)/g, 'SW sighted '],
+  [/\bI (?:could see|saw|observed|noticed) /g, 'SW observed '],
+  [/\bI (?:talked|chatted) (?:about|with|to) /g, 'SW spoke with '],
+  [/\bI (?:think|feel) (?:that )?/g, 'SW’s impression is that '],
+  [/\bI felt (?:that )?/g, 'SW formed the impression that '],
+  [/\bI am\b/g, 'SW is'], [/\bI have\b/g, 'SW has'], [/\bI would\b/g, 'SW would'], [/\bI will\b/g, 'SW will'],
+  [/\bI\b/g, 'SW'], [/\b(with|to|told|asked|for|gave|showed) me\b/g, '$1 SW'], [/\bmy\b/g, 'SW’s'],
+  // reported speech and observations
+  [/\btold SW (?:that )?/g, 'advised SW that '],
+  [/\b(?:said|says|mentioned|stated) that\b/gi, 'reported that'],
+  [/\b(?:said|says|mentioned|stated)\s+(?!to\b|that\b|yes\b|no\b|hello\b|hi\b|thanks\b|thank\b)/gi, 'reported that '],
+  [/\b(?:looked|looks|seemed|seems)\s+(?=(?:well|happy|healthy|content|settled|tired|upset|calm|unwell|clean|comfortable|sad|anxious|relaxed|distressed|engaged|good|fine|ok|okay)\b)/gi, 'appeared '],
+  [/\blooked like\b/gi, 'appeared to be'], [/\btalked about\b/gi, 'discussed'], [/\ba bit\b/gi, 'somewhat'],
+  // names, acronyms, te reo
+  [/\bwhanau ora\b/gi, 'Whānau Ora'], [/\bwhanau\b/gi, 'whānau'], [/\bmaori\b/gi, 'Māori'], [/\bpepi\b/gi, 'pēpi'], [/\bkorero\b/gi, 'kōrero'],
+  [/\bkainga ora\b/gi, 'Kāinga Ora'], [/\boranga tamariki\b/gi, 'Oranga Tamariki'], [/\bfamily start\b/gi, 'Family Start'], [/\bplunket\b/gi, 'Plunket'],
+  [/\bwinz\b/gi, 'WINZ'], [/\bmsd\b/gi, 'MSD'], [/\bece\b/gi, 'ECE'], [/\bgp\b/gi, 'GP'], [/\bfv\b/gi, 'FV'], [/\bcfp\b/gi, 'CFP'], [/\bacc\b/g, 'ACC'],
+  [/\bSW SW\b/g, 'SW'], [/\s{2,}/g, ' '], [/\s+([,.;])/g, '$1'],
+];
+function professionalise(text) {
+  let t = String(text);
+  for (const [re, rep] of POLISH_RULES) t = t.replace(re, rep);
+  t = t.trim().replace(/^[,;\s]+/, '');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/* ================= Quick checks: tap Yes or No to add standard wording ================= */
+const TOGGLES = [
+  { id: 'sighted', label: 'Child sighted', field: 'childSighted', yes: 'Yes', no: 'No' },
+  { id: 'safe', label: 'Child safe at time of visit', section: 'safetyWellbeing', yes: 'Child assessed as safe at the time of the visit', no: 'Safety concerns identified at the time of the visit' },
+  { id: 'sleep', label: 'Safe sleep space sighted', section: 'safetyWellbeing', yes: 'Safe sleep space sighted', no: 'Safe sleep space not sighted' },
+  { id: 'home', label: 'Home safe and tidy', section: 'safetyWellbeing', yes: 'Home environment safe and tidy', no: 'Concerns noted about the home environment' },
+  { id: 'food', label: 'Food in the home', section: 'safetyWellbeing', yes: 'Adequate food available in the home', no: 'Limited food available in the home' },
+  { id: 'smoke', label: 'Working smoke alarm', section: 'safetyWellbeing', yes: 'Working smoke alarm sighted', no: 'Working smoke alarm not sighted' },
+  { id: 'engaged', label: 'Whānau engaged with SW', section: 'general', yes: 'Whānau engaged positively with SW', no: 'Whānau engagement with SW was limited' },
+  { id: 'consent', label: 'Consent and confidentiality explained', section: 'general', yes: 'Consent and confidentiality explained to whānau', no: 'Consent and confidentiality not discussed at this visit' },
+  { id: 'responsive', label: 'Caregiver responsive to child', section: 'attachmentParenting', yes: 'Caregiver responded appropriately to the child’s cues', no: 'Caregiver was not consistently responsive to the child’s cues' },
+  { id: 'follow', label: 'Follow-up visit arranged', section: 'plan', yes: 'Follow-up visit arranged', no: 'No follow-up visit arranged at this time' },
+  { id: 'supervisor', label: 'Supervisor consulted', section: 'plan', yes: 'Supervisor consulted', no: 'Supervisor not yet consulted' },
+];
+function toggleState(t) {
+  if (t.field) { const v = $('#f-' + t.field).value.trim().toLowerCase(); return v === 'yes' ? 'yes' : v === 'no' ? 'no' : 'none'; }
+  const lines = $('#f-' + t.section).value.split('\n').map(l => l.trim());
+  return lines.includes(t.yes) ? 'yes' : lines.includes(t.no) ? 'no' : 'none';
+}
+function setToggle(t, state) {
+  const el = $('#f-' + (t.field || t.section));
+  if (t.field) el.value = state === 'yes' ? 'Yes' : state === 'no' ? 'No' : '';
+  else {
+    const lines = el.value.split('\n').filter(l => l.trim() && l.trim() !== t.yes && l.trim() !== t.no);
+    if (state === 'yes') lines.push(t.yes); else if (state === 'no') lines.push(t.no);
+    el.value = lines.join('\n');
+  }
+  el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 /* ================= PIN lock (screen lock, not encryption) ================= */
@@ -322,6 +398,7 @@ async function checkPin(pin) {
   return !!s && (await hashPin(pin, s.salt)) === s.hash;
 }
 function lock() {
+  if (leaveNote) { const f = leaveNote; leaveNote = null; f(); }
   locked = true; stopDictation(); document.body.classList.add('locked');
   app.innerHTML = `<form class="lock" id="lockf"><h1>Case Flow</h1><p class="muted">Enter your PIN to continue.</p>
     <input id="pin" type="password" inputmode="numeric" autocomplete="off" aria-label="PIN"><p class="err" id="lerr"></p>
@@ -554,6 +631,7 @@ async function clientView(id) {
   $$('[data-rem]').forEach(b => b.onclick = async () => { await DB.del('reminders', +b.dataset.rem); clientView(id); });
 }
 
+let leaveNote = null;
 async function noteForm(clientId, noteId) {
   const c = await DB.get('clients', clientId);
   if (!c) { location.hash = '#/'; return; }
@@ -566,21 +644,25 @@ async function noteForm(clientId, noteId) {
   };
   const today = toDateInput(Date.now());
   const dateVal = n?.visitDate || (n ? toDateInput(n.dateTime) : today);
-  let currentId = n?.id;
+  let currentId = n?.id, dirty = false, deleted = false, timer = null, chain = Promise.resolve();
   const sect = (k, l, inner) => `<div class="sect s-${k}" id="w-${k}"><div class="shead"><label for="f-${k}">${l}</label><span class="tick" aria-hidden="true">${ICON_CHECK}</span></div>${inner}${micBtn('f-' + k, 'Dictate ' + l)}</div>`;
-  app.innerHTML = `${head(noteId ? 'Edit note' : 'New note', `#/client/${clientId}`, noteId ? '<button class="btn small ghost danger-text" id="delnote" type="button">Delete</button>' : '')}
-    <p class="sub">${esc(c.name)}</p>
+  app.innerHTML = `${head(noteId ? 'Edit note' : 'New note', `#/client/${clientId}`, `<button class="btn small ghost danger-text" id="delnote" type="button"${noteId ? '' : ' hidden'}>Delete</button>`)}
+    <p class="sub">${esc(c.name)} · <span id="saveState">Autosave on</span></p>
     <form id="nf" class="stack">
       <div class="progress" id="prog" role="status"><div class="ptext"><strong id="pcount"></strong><span id="plabel"></span></div><div class="pbar"><i id="pfill"></i></div>
         <div class="chips">${FIELD_KEYS.map(k => `<button type="button" class="chip" data-k="${k}">${ICON_CHECK}${CHIP_LABELS[k]}</button>`).join('')}</div></div>
       <section class="card talk">
         <h2>Talk freely</h2>
-        <p class="hint">Tell it about the visit in your own words and pause between thoughts. Then tap Sort and it files each point under the right heading for you to check.</p>
+        <p class="hint">Tell it about the visit in your own words and pause between thoughts. Then tap Sort and it files each point under the right heading, in professional wording, for you to check.</p>
         <button type="button" class="orb" id="orb" data-for="quick" aria-label="Start talking"><span class="ring"></span><span class="ring r2"></span>${ICON_MIC}</button>
         <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-        <textarea id="quick" rows="5" placeholder="Your words appear here. You can edit them."></textarea>
+        <textarea id="quick" rows="5" placeholder="Your words appear here. You can edit them.">${esc(n?.draftTranscript || '')}</textarea>
         <button type="button" class="btn" id="sort">Sort into sections</button>
       </section>
+      <details class="card checks" open><summary>Quick checks <span id="chkcount" class="muted"></span></summary>
+        <p class="hint">Tap Yes or No to add the standard wording to the right section. Tap the dash to clear it.</p>
+        ${TOGGLES.map(t => `<div class="trow" data-t="${t.id}"><span class="tlabel">${t.label}</span><div class="seg" role="radiogroup" aria-label="${t.label}"><button type="button" role="radio" data-s="none" aria-label="Not stated">–</button><button type="button" role="radio" data-s="yes">Yes</button><button type="button" role="radio" data-s="no">No</button></div></div>`).join('')}
+      </details>
       <div class="sect"><div class="shead"><label for="f-visitDate">Date</label></div><input id="f-visitDate" type="date" required value="${dateVal}"></div>
       ${HEAD_FIELDS.map(([k, l, ph]) => sect(k, l, `<input id="f-${k}" type="text" autocomplete="off" placeholder="${ph}" ${k === 'childSighted' ? 'list="yn"' : ''} value="${esc(val(k))}">`)).join('')}
       <datalist id="yn"><option value="Yes"><option value="No"></datalist>
@@ -588,6 +670,7 @@ async function noteForm(clientId, noteId) {
       <button class="btn" type="submit">Save note</button>
       <div class="actions"><button type="button" class="btn ghost" id="wordbtn">Save as Word</button><button type="button" class="btn ghost" id="sendbtn">Send to my email</button></div>
     </form>`;
+
   const refresh = () => {
     let done = 0;
     for (const k of FIELD_KEYS) {
@@ -598,12 +681,58 @@ async function noteForm(clientId, noteId) {
     $('#plabel').textContent = done === FIELD_KEYS.length ? 'Complete, ready to send' : 'sections filled';
     $('#pfill').style.width = (done / FIELD_KEYS.length * 100) + '%';
     $('#prog').classList.toggle('complete', done === FIELD_KEYS.length);
+    let set = 0;
+    $$('.trow').forEach(row => {
+      const st = toggleState(TOGGLES.find(x => x.id === row.dataset.t)); if (st !== 'none') set++;
+      $$('.seg button', row).forEach(b => b.setAttribute('aria-checked', String(b.dataset.s === st)));
+    });
+    $('#chkcount').textContent = set ? `· ${set} set` : '';
   };
-  $('#nf').addEventListener('input', refresh);
+
+  /* ---- autosave ---- */
+  const setState = t => { const el = $('#saveState'); if (el) el.textContent = t; };
+  const build = final => {
+    const rec = { ...(n || {}), clientId };
+    rec.visitDate = $('#f-visitDate').value || today;
+    rec.dateTime = new Date(rec.visitDate + 'T12:00:00').getTime();
+    for (const [k] of [...HEAD_FIELDS, ...SECTIONS]) rec[k] = $('#f-' + k).value.trim();
+    const q = $('#quick').value.trim();
+    if (final && q) { rec.general = rec.general ? rec.general + '\n' + q : q; $('#f-general').value = rec.general; $('#quick').value = ''; rec.draftTranscript = ''; refresh(); }
+    else rec.draftTranscript = q;
+    return rec;
+  };
+  const hasContent = rec => rec.draftTranscript || [...HEAD_FIELDS, ...SECTIONS].some(([k]) => rec[k]);
+  const save = (final = false) => {
+    if (deleted) return Promise.resolve(null);
+    stopDictation();
+    const rec = build(final);                       // read the screen now, write after
+    if (!final && !currentId && !hasContent(rec)) return Promise.resolve(null);
+    const p = chain.then(async () => {
+      if (deleted) return null;
+      if (currentId) rec.id = currentId;
+      currentId = await DB.put('notes', rec); rec.id = currentId; dirty = false;
+      setState('Saved ' + new Date().toLocaleTimeString('en-NZ', { hour: 'numeric', minute: '2-digit' }));
+      const del = $('#delnote'); if (del) del.hidden = false;
+      return rec;
+    }).catch(() => { setState('Couldn’t autosave. Tap Save note.'); return null; });
+    chain = p; return p;
+  };
+  const queueSave = () => { dirty = true; setState('Saving…'); clearTimeout(timer); timer = setTimeout(() => save(false), 700); };
+  const flush = () => { clearTimeout(timer); return dirty && !deleted ? save(false) : chain; };
+  const onHide = () => { if (document.hidden) flush(); };
+  document.addEventListener('visibilitychange', onHide);
+  window.addEventListener('pagehide', flush);
+  leaveNote = () => { document.removeEventListener('visibilitychange', onHide); window.removeEventListener('pagehide', flush); return flush(); };
+
+  $('#nf').addEventListener('input', () => { refresh(); queueSave(); });
   $$('.chip').forEach(ch => ch.onclick = () => {
     const w = $('#w-' + ch.dataset.k);
     w.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
     $('#f-' + ch.dataset.k).focus({ preventScroll: true });
+  });
+  $$('.trow .seg button').forEach(b => b.onclick = () => {
+    if (navigator.vibrate) navigator.vibrate(8);
+    setToggle(TOGGLES.find(x => x.id === b.closest('.trow').dataset.t), b.dataset.s);
   });
   refresh();
   $$('.mic, .orb').forEach(b => b.onclick = () => { if (navigator.vibrate) navigator.vibrate(8); toggleDictation(b, $('#' + b.dataset.for)); });
@@ -618,30 +747,22 @@ async function noteForm(clientId, noteId) {
         const lines = res.items.filter(x => x.section === k).map(x => x.text); if (!lines.length) continue;
         const el = $('#f-' + k); el.value = el.value.trim() ? el.value.replace(/\s+$/, '') + '\n' + lines.join('\n') : lines.join('\n');
       }
-      $('#quick').value = ''; refresh(); toast('Filed into your note.');
+      $('#quick').value = '';
+      $('#nf').dispatchEvent(new Event('input')); toast('Filed into your note.');
     });
   };
-  const persist = async () => {
-    stopDictation();
-    const rec = { ...(n || {}), clientId };
-    rec.visitDate = $('#f-visitDate').value || today;
-    rec.dateTime = new Date(rec.visitDate + 'T12:00:00').getTime();
-    for (const [k] of [...HEAD_FIELDS, ...SECTIONS]) rec[k] = $('#f-' + k).value.trim();
-    const q = $('#quick').value.trim();
-    if (q) { rec.general = rec.general ? rec.general + '\n' + q : q; $('#f-general').value = rec.general; $('#quick').value = ''; refresh(); }
-    if (currentId) rec.id = currentId;
-    currentId = await DB.put('notes', rec); rec.id = currentId;
-    return rec;
-  };
-  $('#nf').onsubmit = async e => { e.preventDefault(); await persist(); location.hash = `#/client/${clientId}`; };
+  $('#nf').onsubmit = async e => { e.preventDefault(); await save(true); location.hash = `#/client/${clientId}`; };
   $('#wordbtn').onclick = async () => {
-    const rec = await persist();
+    const rec = await save(true); if (!rec) return;
     download(docxName(rec, c), buildDocx(rec), DOCX_MIME);
     toast('Saved as Word in your Downloads.');
   };
-  $('#sendbtn').onclick = async () => { const rec = await persist(); await sendWord(rec, c); };
-  if (noteId) $('#delnote').onclick = async () => {
-    if (await confirmBox('Delete this note? This can’t be undone.')) { await DB.del('notes', noteId); location.hash = `#/client/${clientId}`; }
+  $('#sendbtn').onclick = async () => { const rec = await save(true); if (rec) await sendWord(rec, c); };
+  $('#delnote').onclick = async () => {
+    if (!await confirmBox('Delete this note? This can’t be undone.')) return;
+    deleted = true; clearTimeout(timer);
+    await chain; if (currentId) await DB.del('notes', currentId);
+    location.hash = `#/client/${clientId}`;
   };
 }
 
@@ -718,6 +839,7 @@ const routes = [
 ];
 async function route() {
   if (locked) return;
+  if (leaveNote) { const f = leaveNote; leaveNote = null; await f(); }
   stopDictation();
   const h = location.hash || '#/';
   for (const [re, fn] of routes) { const m = h.match(re); if (m) { await fn(m); break; } }
