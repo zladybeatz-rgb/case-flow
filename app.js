@@ -47,7 +47,7 @@ function addSpoken(ta, text) {
   const notify = () => ta.dispatchEvent(new Event('input', { bubbles: true }));
   if (ta.id === 'quick') { ta.value = ta.value.trim() ? ta.value.replace(/\s+$/, '') + '\n' + t : t; notify(); return; }
   if (ta.tagName !== 'TEXTAREA') { ta.value = appendText(ta.value, t); notify(); return; }
-  const parts = t.split(/\b(?:next point|new bullet|next bullet)\b[,.]?\s*/i).map(x => x.trim());
+  const parts = t.split(/\b(?:bullet point|next point|new bullet|next bullet)\b[,.]?\s*/i).map(x => x.trim());
   ta.value = parts.reduce((acc, p, i) => i === 0 ? (p ? appendText(acc, p) : acc) : acc.replace(/\s+$/, '') + '\n' + p, ta.value);
   notify();
 }
@@ -58,9 +58,15 @@ const ICON_TRASH = '<svg width="22" height="22" viewBox="0 0 24 24" fill="curren
 const micBtn = (target, label) => `<button type="button" class="mic" data-for="${target}" aria-label="${esc(label)}">${ICON_MIC}</button>`;
 
 let toastTimer;
-function toast(msg) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 4000);
+function toast(msg, action) {
+  const t = $('#toast'); t.textContent = msg; t.style.pointerEvents = '';
+  if (action) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = action.label;
+    b.onclick = () => { action.fn(); t.classList.remove('show'); };
+    t.append(' ', b); t.style.pointerEvents = 'auto';
+  }
+  t.classList.add('show'); clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), action ? 9000 : 4000);
 }
 
 /* ================= Storage (IndexedDB, on this device only) ================= */
@@ -165,53 +171,21 @@ function toggleDictation(btn, ta) {
   run();
 }
 
-/** Say each heading followed by "colon". Say "next point" for a new bullet. Text before the first heading goes under General. */
-function parseHeadings(text) {
-  const clean = text.replace(/\bslash\b/gi, '/').replace(/\b(?:next point|new bullet|next bullet)\b[,.]?\s*/gi, '\n').replace(/\bcolon\b/gi, ':').trim();
-  const re = /(present|purpose|child sighted|general|attachment\s*\/?\s*parenting|safety\s*\/?\s*wellbeing|c\.?\s?f\.?\s?p\.?|services|plan)\s*:/gi;
-  const map = { present: 'present', purpose: 'purpose', childsighted: 'childSighted', general: 'general', attachmentparenting: 'attachmentParenting', safetywellbeing: 'safetyWellbeing', cfp: 'cfp', services: 'services', plan: 'plan' };
-  const ms = [...clean.matchAll(re)];
-  if (!ms.length) return { general: clean };
-  const out = {};
-  const add = (k, v) => { v = v.trim(); if (v) out[k] = out[k] ? out[k] + '\n' + v : v; };
-  add('general', clean.slice(0, ms[0].index));
-  ms.forEach((m, i) => {
-    const start = m.index + m[0].length;
-    const end = i + 1 < ms.length ? ms[i + 1].index : clean.length;
-    const key = map[m[1].toLowerCase().replace(/[\s./]/g, '')];
-    let v = clean.slice(start, end);
-    if (['present', 'purpose', 'childSighted'].includes(key)) v = v.replace(/\s*\n\s*/g, ' ');
-    add(key, v);
-  });
-  return out;
-}
-
-/* ================= Talk freely: on-device sorting (nothing leaves your phone) ================= */
-const DEFAULT_KEYWORDS = {
-  attachmentParenting: ['parent*:2', 'mum', 'mother', 'dad', 'father', 'caregiver*', 'bond*', 'attachment', 'cuddl*', 'comfort*', 'settl*', 'soothe*', 'respons*', 'interact*', 'play*:1', 'routine*', 'bedtime', 'boundar*', 'disciplin*', 'feeding', 'bottle', 'breastfe*', 'eye contact', 'affection*', 'nurtur*', 'attuned', 'tantrum*', 'cues', 'smil*:1', 'laugh*:1', 'relationship with'],
-  safetyWellbeing: ['safe:2', 'safety', 'unsafe:3', 'risk*', 'injur*:3', 'bruis*:3', 'harm*', 'violen*:3', 'assault*:3', 'abus*:3', 'neglect*:3', 'safe sleep:3', 'cot', 'wahakura', 'pepi pod', 'bed shar*:3', 'co-sleep*:3', 'hazard*', 'smoke alarm*:3', 'medical:1', 'doctor', 'gp', 'plunket', 'immunis*', 'health*:1', 'sick', 'illness', 'medication*', 'hungry', 'kai', 'food:1', 'fridge', 'pantry', 'clean:1', 'tidy:1', 'mould', 'damp', 'heating:1', 'hygiene', 'drug*', 'alcohol', 'meth', 'cannabis', 'substance*', 'mental health', 'depress*', 'anxi*', 'suicid*:3', 'self harm:3', 'wellbeing', 'school:1', 'attendance', 'development*:1', 'weight:1', 'growth:1', 'condition of the home:3', 'home environment'],
-  cfp: ['cfp:4', 'family plan:4', 'child and family plan:4', 'whanau plan:4', 'goal*', 'outcome*', 'milestone*:1', 'progress:1', 'review*:1'],
-  services: ['referral*', 'referred', 'service*:1', 'agency', 'agencies', 'provider*', 'support worker*', 'counsell*', 'programme*', 'program*', 'course*:1', 'budget*', 'msd', 'winz:3', 'work and income:3', 'housing', 'kainga ora:3', 'whanau ora:3', 'kaupapa maori', 'navigator*', 'swis:3', 'family start:3', 'early intervention', 'strengthening families:3', 'acc', 'foodbank*', 'food bank*', 'iwi:1', 'marae:1', 'ngo', 'barnardos:3', 'refuge:3', 'shine:3', 'kindergarten', 'early childhood', 'ece', 'daycare', 'childcare'],
-  plan: ['will:3', 'going to:3', 'plan to:3', 'next visit:3', 'next week:3', 'next fortnight:3', 'next month:3', 'tomorrow', 'follow up:3', 'follow-up:3', 'followup:3', 'agreed:1', 'to arrange:3', 'to contact:3', 'to call:3', 'to book:3', 'needs to', 'need to', 'by next:3', 'action*', 'check in', 'check-in', 'organis*', 'schedul*', 'arrange*', 'to do', 'outstanding', 'deadline*', 'to be completed:3'],
-};
-const KW_KEY = 'cf_keywords';
-function getKeywords() {
-  let saved = {}; try { saved = JSON.parse(localStorage.getItem(KW_KEY) || '{}'); } catch { /* ignore */ }
-  return { ...DEFAULT_KEYWORDS, ...saved };
-}
-const norm = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\b(i|we|he|she|they|you|it)['’]ll\b/g, '$1 will');
-function compileKeywords(map) {
-  const out = {};
-  for (const [sec, list] of Object.entries(map)) {
-    out[sec] = list.map(raw => {
-      const m = String(raw).trim().match(/^(.*?)(?::(\d))?$/); let kw = norm(m[1]).trim(); if (!kw) return null;
-      const stem = kw.endsWith('*'); if (stem) kw = kw.slice(0, -1);
-      const base = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-      return { re: new RegExp('(?:^|[^a-z0-9])' + base + (stem ? '[a-z0-9]*' : '(?=$|[^a-z0-9])')), w: m[2] ? +m[2] : 2 };
-    }).filter(Boolean);
-  }
-  return out;
-}
+/* ================= Dictation sorting: say a heading, pause, then talk ================= */
+const HEAD_PATTERNS = [
+  ['present', /(?:those\s+)?present|attendees|in attendance/],
+  ['purpose', /purpose(?:\s+of\s+(?:the\s+)?(?:visit|meeting|contact))?/],
+  ['childSighted', /(?:child|children|tamariki|baby)\s+(?:sighted|sited|cited|sight)|sighted/],
+  ['general', /general/],
+  ['attachmentParenting', /attachment(?:[\s,/-]+(?:and\s+)?parenting)?|parenting/],
+  ['safetyWellbeing', /safety(?:[\s,/-]+(?:and\s+)?well[\s-]?being)?|well[\s-]?being/],
+  ['cfp', /c\.?\s?f\.?\s?p\.?|see\s+f\s*p/],
+  ['services', /services?/],
+  ['plan', /plan/],
+];
+const HEAD_ALL = HEAD_PATTERNS.map(([, re]) => '(?:' + re.source + ')').join('|');
+const headKey = str => { const t = str.toLowerCase().trim(); for (const [k, re] of HEAD_PATTERNS) if (new RegExp('^(?:' + re.source + ')$').test(t)) return k; return null; };
+const BULLET_RE = /\b(?:bullet point|next point|new bullet|next bullet)\b[,.]?\s*/gi;
 function breakLong(seg) {
   const words = seg.split(/\s+/);
   if (words.length <= 28) return [seg];
@@ -224,91 +198,37 @@ function breakLong(seg) {
   const tidy = x => x.replace(/[,;]+$/, '').trim();
   return [...breakLong(tidy(words.slice(0, best).join(' '))), ...breakLong(words.slice(best).join(' ').replace(/^(and|then|but|also)\s+/i, ''))];
 }
-function splitSentences(text) {
-  const out = [];
-  for (const block of text.split(/\r?\n+/)) {
-    for (const seg of block.replace(/([.!?])\s+/g, '$1\u0001').split('\u0001')) {
-      for (let p of breakLong(seg.trim())) {
-        p = p.replace(/\b(?:um+|uh+|erm)\b[,]?\s*/gi, '').replace(/[.!?]+$/, '').trim();
-        if (p.length > 1) out.push(p.charAt(0).toUpperCase() + p.slice(1));
+/** Reads the dictation box. A heading is a line that is only the heading name (say it, pause, then talk),
+ *  or "heading plan ...", or the older "plan colon ...". Anything before the first heading goes to General. */
+function parseDictation(text, polish) {
+  const clean = String(text).replace(/\bcolon\b/gi, ':').replace(/\bslash\b/gi, '/');
+  const out = {}; let cur = 'general', headings = 0;
+  const addText = (key, raw) => {
+    for (const part of raw.split(BULLET_RE)) {
+      for (const sent of part.replace(/([.!?])\s+/g, '$1\u0001').split('\u0001')) {
+        for (let p of breakLong(sent.trim())) {
+          p = p.replace(/\b(?:um+|uh+|erm)\b[,]?\s*/gi, '').replace(/^[,;:\s]+|[.!?,;:\s]+$/g, '').trim();
+          if (p.length < 2) continue;
+          p = polish ? professionalise(p) : p.charAt(0).toUpperCase() + p.slice(1);
+          (out[key] = out[key] || []).push(p);
+        }
       }
     }
-  }
-  return out;
-}
-const CHILD_RE = /\b(child|children|tamariki|tamaiti|baby|pepi|infant|toddler|boy|girl|kids?)\b/;
-function extractMeta(sentences) {
-  const meta = {}, rest = [];
-  for (const s of sentences) {
-    const n = norm(s); let m;
-    if (!meta.purpose && (m = s.match(/(?:the )?purpose (?:of (?:the|this|today['’]?s) (?:visit|meeting|contact) )?(?:was|is) (?:to )?(.+)/i))) { meta.purpose = m[1].trim(); continue; }
-    if (!meta.present && (m = s.match(/^(?:present|those present|attendees|in attendance)(?: (?:were|was|are|is))?[:\s-]+(.+)/i))) { meta.present = m[1].trim(); continue; }
-    if (!meta.present && (m = s.match(/^(.+?)\s+(?:was|were)\s+(?:also\s+)?present$/i))) { meta.present = m[1].trim(); continue; }
-    if (!meta.childSighted && CHILD_RE.test(n) && /\b(sighted|saw|seen|see|sight)\b/.test(n)) {
-      meta.childSighted = /\b(not|unable|couldn't|could not|didn't|did not|wasn't|weren't|no)\b/.test(n) ? 'No' : 'Yes';
-    }
-    rest.push(s);
-  }
-  return { meta, rest };
-}
-function classify(sentence, kw, prev) {
-  const n = norm(sentence), scores = {};
-  for (const sec of Object.keys(kw)) { let t = 0; for (const { re, w } of kw[sec]) if (re.test(n)) t += w; scores[sec] = t; }
-  let best = 'general', bs = 1;
-  for (const sec of ['plan', 'cfp', 'services', 'safetyWellbeing', 'attachmentParenting']) if ((scores[sec] || 0) > bs) { bs = scores[sec]; best = sec; }
-  if (best === 'general' && prev && prev !== 'general' && /^(he|she|they|it|this|that|also|and|but|then|their|his|her)\b/.test(n)) best = prev;
-  return best;
-}
-function sortTranscript(text) {
-  const p = parseHeadings(text);
-  const explicitKeys = Object.keys(p).filter(k => k !== 'general');
-  if (explicitKeys.length) {
-    const meta = {}, items = [];
-    for (const [k, v] of Object.entries(p)) {
-      if (['present', 'purpose', 'childSighted'].includes(k)) meta[k] = v;
-      else v.split(/\n+/).map(x => x.trim()).filter(Boolean).forEach(t => items.push({ text: t.charAt(0).toUpperCase() + t.slice(1), section: k }));
-    }
-    return { meta, items };
-  }
-  const kw = compileKeywords(getKeywords());
-  const { meta, rest } = extractMeta(splitSentences(text));
-  let prev = 'general';
-  const items = rest.map(t => { const section = classify(t, kw, prev); prev = section; return { text: t, section }; });
-  return { meta, items };
-}
-const SEC_LABEL = Object.fromEntries(SECTIONS);
-const KW_LABELS = [['attachmentParenting', 'Attachment/Parenting'], ['safetyWellbeing', 'Safety/Wellbeing'], ['cfp', 'CFP'], ['services', 'Services'], ['plan', 'Plan']];
-function openSortSheet(result, onApply) {
-  let polish = localStorage.getItem('cf_polish') !== '0';
-  const items = result.items.map(x => ({ section: x.section, orig: x.text, pol: professionalise(x.text), text: '', edited: false }));
-  const textOf = x => x.edited ? x.text : (polish ? x.pol : x.orig);
-  const opts = k => SECTIONS.map(([v, l]) => `<option value="${v}"${v === k ? ' selected' : ''}>${l}</option>`).join('') + '<option value="__remove">Remove</option>';
-  const m = result.meta;
-  const cap = v => v ? v.charAt(0).toUpperCase() + v.slice(1) : '';
-  const d = openDialog(`<form method="dialog"><h2>Check before filing</h2><p class="hint" id="sh-count"></p>
-    <label class="switchrow"><input type="checkbox" id="polish"${polish ? ' checked' : ''}><span><strong>Professional wording</strong><br><small>Turns casual phrases into note-style language. Tap any line to edit it, and check the meaning before filing.</small></span></label>
-    <div class="sheet-meta">
-      <label for="pm-present">Present</label><input id="pm-present" type="text" value="${esc(cap(m.present))}">
-      <label for="pm-purpose">Purpose</label><input id="pm-purpose" type="text" value="${esc(cap(m.purpose))}">
-      <label for="pm-sighted">Child sighted</label><select id="pm-sighted"><option value="">Not stated</option><option${m.childSighted === 'Yes' ? ' selected' : ''}>Yes</option><option${m.childSighted === 'No' ? ' selected' : ''}>No</option></select>
-    </div><div id="groups"></div>
-    <div class="row sticky"><button class="btn ghost" value="cancel">Cancel</button><button class="btn" value="ok">File into note</button></div></form>`, 'sheet');
-  const draw = () => {
-    const live = items.map((x, i) => ({ ...x, i })).filter(x => x.section !== '__remove');
-    $('#sh-count').textContent = `${live.length} point${live.length === 1 ? '' : 's'} sorted. Change any that landed in the wrong place.`;
-    $('#groups').innerHTML = SECTIONS.map(([k, l]) => {
-      const g = live.filter(x => x.section === k); if (!g.length) return '';
-      return `<section class="grp s-${k}"><header><strong>${l}</strong><span class="count">${g.length}</span></header><ul>${g.map(x => `<li><span class="ed" contenteditable="true" spellcheck="true" data-i="${x.i}">${esc(textOf(x))}</span><select data-i="${x.i}" aria-label="Move to section">${opts(k)}</select></li>`).join('')}</ul></section>`;
-    }).join('') || '<p class="empty">Nothing to file.</p>';
-    $$('#groups select').forEach(sel => sel.onchange = () => { items[+sel.dataset.i].section = sel.value; draw(); });
-    $$('#groups .ed').forEach(el => el.addEventListener('input', () => { const it = items[+el.dataset.i]; it.text = el.textContent.trim(); it.edited = true; }));
   };
-  $('#polish').onchange = e => { polish = e.target.checked; localStorage.setItem('cf_polish', polish ? '1' : '0'); draw(); };
-  draw();
-  d.onclose = () => {
-    if (d.returnValue !== 'ok') return;
-    onApply({ meta: { present: $('#pm-present').value.trim(), purpose: $('#pm-purpose').value.trim(), childSighted: $('#pm-sighted').value }, items: items.filter(x => x.section !== '__remove' && textOf(x)).map(x => ({ text: textOf(x), section: x.section })) });
-  };
+  const markers = new RegExp('\\bheading\\s+(' + HEAD_ALL + ')\\b|\\b(' + HEAD_ALL + ')\\s*:', 'gi');
+  for (let line of clean.split(/\n+/)) {
+    line = line.trim(); if (!line) continue;
+    const whole = headKey(line.toLowerCase().replace(/[.,;:!?]+/g, ' ').replace(/\bheading\b/g, ' ').replace(/\s+/g, ' ').trim());
+    if (whole) { cur = whole; headings++; continue; }
+    let last = 0;
+    for (const m of line.matchAll(markers)) {
+      addText(cur, line.slice(last, m.index));
+      cur = headKey((m[1] || m[2]).replace(/\s+/g, ' ')) || cur; headings++;
+      last = m.index + m[0].length;
+    }
+    addText(cur, line.slice(last));
+  }
+  return { out, headings };
 }
 
 /* ================= Professional wording (rule-based, on this phone) ================= */
@@ -349,36 +269,6 @@ function professionalise(text) {
   for (const [re, rep] of POLISH_RULES) t = t.replace(re, rep);
   t = t.trim().replace(/^[,;\s]+/, '');
   return t.charAt(0).toUpperCase() + t.slice(1);
-}
-
-/* ================= Quick checks: tap Yes or No to add standard wording ================= */
-const TOGGLES = [
-  { id: 'sighted', label: 'Child sighted', field: 'childSighted', yes: 'Yes', no: 'No' },
-  { id: 'safe', label: 'Child safe at time of visit', section: 'safetyWellbeing', yes: 'Child assessed as safe at the time of the visit', no: 'Safety concerns identified at the time of the visit' },
-  { id: 'sleep', label: 'Safe sleep space sighted', section: 'safetyWellbeing', yes: 'Safe sleep space sighted', no: 'Safe sleep space not sighted' },
-  { id: 'home', label: 'Home safe and tidy', section: 'safetyWellbeing', yes: 'Home environment safe and tidy', no: 'Concerns noted about the home environment' },
-  { id: 'food', label: 'Food in the home', section: 'safetyWellbeing', yes: 'Adequate food available in the home', no: 'Limited food available in the home' },
-  { id: 'smoke', label: 'Working smoke alarm', section: 'safetyWellbeing', yes: 'Working smoke alarm sighted', no: 'Working smoke alarm not sighted' },
-  { id: 'engaged', label: 'Whānau engaged with SW', section: 'general', yes: 'Whānau engaged positively with SW', no: 'Whānau engagement with SW was limited' },
-  { id: 'consent', label: 'Consent and confidentiality explained', section: 'general', yes: 'Consent and confidentiality explained to whānau', no: 'Consent and confidentiality not discussed at this visit' },
-  { id: 'responsive', label: 'Caregiver responsive to child', section: 'attachmentParenting', yes: 'Caregiver responded appropriately to the child’s cues', no: 'Caregiver was not consistently responsive to the child’s cues' },
-  { id: 'follow', label: 'Follow-up visit arranged', section: 'plan', yes: 'Follow-up visit arranged', no: 'No follow-up visit arranged at this time' },
-  { id: 'supervisor', label: 'Supervisor consulted', section: 'plan', yes: 'Supervisor consulted', no: 'Supervisor not yet consulted' },
-];
-function toggleState(t) {
-  if (t.field) { const v = $('#f-' + t.field).value.trim().toLowerCase(); return v === 'yes' ? 'yes' : v === 'no' ? 'no' : 'none'; }
-  const lines = $('#f-' + t.section).value.split('\n').map(l => l.trim());
-  return lines.includes(t.yes) ? 'yes' : lines.includes(t.no) ? 'no' : 'none';
-}
-function setToggle(t, state) {
-  const el = $('#f-' + (t.field || t.section));
-  if (t.field) el.value = state === 'yes' ? 'Yes' : state === 'no' ? 'No' : '';
-  else {
-    const lines = el.value.split('\n').filter(l => l.trim() && l.trim() !== t.yes && l.trim() !== t.no);
-    if (state === 'yes') lines.push(t.yes); else if (state === 'no') lines.push(t.no);
-    el.value = lines.join('\n');
-  }
-  el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 /* ================= PIN lock (screen lock, not encryption) ================= */
@@ -645,27 +535,23 @@ async function noteForm(clientId, noteId) {
   const today = toDateInput(Date.now());
   const dateVal = n?.visitDate || (n ? toDateInput(n.dateTime) : today);
   let currentId = n?.id, dirty = false, deleted = false, timer = null, chain = Promise.resolve();
-  const sect = (k, l, inner) => `<div class="sect s-${k}" id="w-${k}"><div class="shead"><label for="f-${k}">${l}</label><span class="tick" aria-hidden="true">${ICON_CHECK}</span></div>${inner}${micBtn('f-' + k, 'Dictate ' + l)}</div>`;
+  const sect = (k, l, inner, extra = '') => `<div class="sect s-${k}" id="w-${k}"><div class="shead"><label for="f-${k}">${l}</label>${extra}<span class="tick" aria-hidden="true">${ICON_CHECK}</span></div>${inner}${micBtn('f-' + k, 'Dictate ' + l)}</div>`;
   app.innerHTML = `${head(noteId ? 'Edit note' : 'New note', `#/client/${clientId}`, `<button class="btn small ghost danger-text" id="delnote" type="button"${noteId ? '' : ' hidden'}>Delete</button>`)}
     <p class="sub">${esc(c.name)} · <span id="saveState">Autosave on</span></p>
     <form id="nf" class="stack">
       <div class="progress" id="prog" role="status"><div class="ptext"><strong id="pcount"></strong><span id="plabel"></span></div><div class="pbar"><i id="pfill"></i></div>
         <div class="chips">${FIELD_KEYS.map(k => `<button type="button" class="chip" data-k="${k}">${ICON_CHECK}${CHIP_LABELS[k]}</button>`).join('')}</div></div>
       <section class="card talk">
-        <h2>Talk freely</h2>
-        <p class="hint">Tell it about the visit in your own words and pause between thoughts. Then tap Sort and it files each point under the right heading, in professional wording, for you to check.</p>
+        <h2>Quick dictation</h2>
+        <p class="hint">Tap the mic. Say a heading, pause, then talk. Headings: Present, Purpose, Child sighted, General, Attachment parenting, Safety wellbeing, CFP, Services, Plan. Say “bullet point” for a new bullet.</p>
         <button type="button" class="orb" id="orb" data-for="quick" aria-label="Start talking"><span class="ring"></span><span class="ring r2"></span>${ICON_MIC}</button>
         <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
         <textarea id="quick" rows="5" placeholder="Your words appear here. You can edit them.">${esc(n?.draftTranscript || '')}</textarea>
+        <label class="switchrow compact"><input type="checkbox" id="polish"${localStorage.getItem('cf_polish') === '0' ? '' : ' checked'}><span>Professional wording</span></label>
         <button type="button" class="btn" id="sort">Sort into sections</button>
       </section>
-      <details class="card checks" open><summary>Quick checks <span id="chkcount" class="muted"></span></summary>
-        <p class="hint">Tap Yes or No to add the standard wording to the right section. Tap the dash to clear it.</p>
-        ${TOGGLES.map(t => `<div class="trow" data-t="${t.id}"><span class="tlabel">${t.label}</span><div class="seg" role="radiogroup" aria-label="${t.label}"><button type="button" role="radio" data-s="none" aria-label="Not stated">–</button><button type="button" role="radio" data-s="yes">Yes</button><button type="button" role="radio" data-s="no">No</button></div></div>`).join('')}
-      </details>
       <div class="sect"><div class="shead"><label for="f-visitDate">Date</label></div><input id="f-visitDate" type="date" required value="${dateVal}"></div>
-      ${HEAD_FIELDS.map(([k, l, ph]) => sect(k, l, `<input id="f-${k}" type="text" autocomplete="off" placeholder="${ph}" ${k === 'childSighted' ? 'list="yn"' : ''} value="${esc(val(k))}">`)).join('')}
-      <datalist id="yn"><option value="Yes"><option value="No"></datalist>
+      ${HEAD_FIELDS.map(([k, l, ph]) => sect(k, l, `<input id="f-${k}" type="text" autocomplete="off" placeholder="${ph}" value="${esc(val(k))}">`, k === 'childSighted' ? '<div class="seg" id="yn" role="radiogroup" aria-label="Child sighted"><button type="button" role="radio" data-v="Yes">Yes</button><button type="button" role="radio" data-v="No">No</button></div>' : '')).join('')}
       ${SECTIONS.map(([k, l]) => sect(k, l, `<textarea id="f-${k}" rows="4" placeholder="One point per line. Each line becomes a bullet.">${esc(val(k))}</textarea>`)).join('')}
       <button class="btn" type="submit">Save note</button>
       <div class="actions"><button type="button" class="btn ghost" id="wordbtn">Save as Word</button><button type="button" class="btn ghost" id="sendbtn">Send to my email</button></div>
@@ -681,12 +567,8 @@ async function noteForm(clientId, noteId) {
     $('#plabel').textContent = done === FIELD_KEYS.length ? 'Complete, ready to send' : 'sections filled';
     $('#pfill').style.width = (done / FIELD_KEYS.length * 100) + '%';
     $('#prog').classList.toggle('complete', done === FIELD_KEYS.length);
-    let set = 0;
-    $$('.trow').forEach(row => {
-      const st = toggleState(TOGGLES.find(x => x.id === row.dataset.t)); if (st !== 'none') set++;
-      $$('.seg button', row).forEach(b => b.setAttribute('aria-checked', String(b.dataset.s === st)));
-    });
-    $('#chkcount').textContent = set ? `· ${set} set` : '';
+    const yn = $('#f-childSighted').value.trim().toLowerCase();
+    $$('#yn button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.v.toLowerCase() === yn)));
   };
 
   /* ---- autosave ---- */
@@ -730,25 +612,40 @@ async function noteForm(clientId, noteId) {
     w.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
     $('#f-' + ch.dataset.k).focus({ preventScroll: true });
   });
-  $$('.trow .seg button').forEach(b => b.onclick = () => {
+  $$('#yn button').forEach(b => b.onclick = () => {
     if (navigator.vibrate) navigator.vibrate(8);
-    setToggle(TOGGLES.find(x => x.id === b.closest('.trow').dataset.t), b.dataset.s);
+    const el = $('#f-childSighted'); el.value = el.value.trim().toLowerCase() === b.dataset.v.toLowerCase() ? '' : b.dataset.v;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
   });
   refresh();
   $$('.mic, .orb').forEach(b => b.onclick = () => { if (navigator.vibrate) navigator.vibrate(8); toggleDictation(b, $('#' + b.dataset.for)); });
+  $('#polish').onchange = e => localStorage.setItem('cf_polish', e.target.checked ? '1' : '0');
   $('#sort').onclick = () => {
     stopDictation();
     const text = $('#quick').value.trim();
-    if (!text) { toast('Talk or type something first.'); return; }
-    openSortSheet(sortTranscript(text), res => {
-      const setIfEmpty = (k, v) => { const el = $('#f-' + k); if (v && !el.value.trim()) el.value = v; };
-      setIfEmpty('present', res.meta.present); setIfEmpty('purpose', res.meta.purpose); setIfEmpty('childSighted', res.meta.childSighted);
-      for (const [k] of SECTIONS) {
-        const lines = res.items.filter(x => x.section === k).map(x => x.text); if (!lines.length) continue;
-        const el = $('#f-' + k); el.value = el.value.trim() ? el.value.replace(/\s+$/, '') + '\n' + lines.join('\n') : lines.join('\n');
-      }
-      $('#quick').value = '';
-      $('#nf').dispatchEvent(new Event('input')); toast('Filed into your note.');
+    if (!text) { toast('Say or type something first.'); return; }
+    const { out, headings } = parseDictation(text, $('#polish').checked);
+    if (!Object.keys(out).length) { toast('Nothing to sort.'); return; }
+    const keys = [...HEAD_FIELDS, ...SECTIONS].map(x => x[0]);
+    const snap = Object.fromEntries(keys.map(k => [k, $('#f-' + k).value])); snap.quick = $('#quick').value;
+    for (const k of ['present', 'purpose']) {
+      if (!out[k]) continue; const el = $('#f-' + k), v = out[k].join(', ');
+      el.value = el.value.trim() ? el.value.trim() + ', ' + v : v;
+    }
+    if (out.childSighted) {
+      const first = out.childSighted[0], yn = /^yes\b/i.test(first) ? 'Yes' : /^(no|not)\b/i.test(first) ? 'No' : '';
+      const el = $('#f-childSighted');
+      if (yn) { el.value = yn; const extra = [first.replace(/^(yes|no|not)\b[,\s]*/i, ''), ...out.childSighted.slice(1)].filter(Boolean); if (extra.length) out.general = [...(out.general || []), ...extra]; }
+      else if (!el.value.trim()) el.value = out.childSighted.join(', ');
+    }
+    for (const [k] of SECTIONS) {
+      if (!out[k]) continue; const el = $('#f-' + k);
+      el.value = (el.value.trim() ? el.value.replace(/\s+$/, '') + '\n' : '') + out[k].join('\n');
+    }
+    $('#quick').value = '';
+    $('#nf').dispatchEvent(new Event('input'));
+    toast(headings ? 'Sorted into sections.' : 'No headings heard, so everything went under General.', {
+      label: 'Undo', fn: () => { for (const k of keys) $('#f-' + k).value = snap[k]; $('#quick').value = snap.quick; $('#nf').dispatchEvent(new Event('input')); }
     });
   };
   $('#nf').onsubmit = async e => { e.preventDefault(); await save(true); location.hash = `#/client/${clientId}`; };
@@ -793,10 +690,6 @@ async function settingsView() {
       <p class="hint">Your email address. It stays on this phone. When you tap Send to my email, it’s copied so you can paste it into the To box.</p>
       <input id="mail" type="email" autocomplete="email" aria-label="Your email address" value="${esc(localStorage.getItem('cf_email') || '')}">
       <button class="btn ghost" id="savemail" type="button">Save email</button></section>
-    <section class="section card"><h2 style="margin-top:0">Sorting words</h2>
-      <p class="hint">Talk freely sorts each sentence by the words in it. Edit the words for each section, separated by commas. A number after a word (for example plan:3) makes it count more. Anything that matches nothing goes to General.</p>
-      ${KW_LABELS.map(([k, l]) => `<details class="kw"><summary>${l}</summary><textarea id="kw-${k}" rows="6" style="padding-right:.8rem">${esc(getKeywords()[k].join(', '))}</textarea></details>`).join('')}
-      <button class="btn ghost" id="kwsave" type="button">Save words</button><button class="btn ghost" id="kwreset" type="button">Reset to defaults</button></section>
     <section class="section card"><h2 style="margin-top:0">Backup</h2>
       <p class="hint">Your data lives only on this device. If you clear browser data or change phones it’s gone, so export a backup regularly. The backup file is not encrypted, so store it somewhere private.</p>
       <button class="btn ghost" id="export" type="button">Export backup</button>
@@ -804,11 +697,6 @@ async function settingsView() {
   $('#setpin').onclick = async () => { const p = await pinDialog(); if (p) { await setPin(p); toast('PIN saved.'); settingsView(); } };
   if (hasPin()) $('#rmpin').onclick = async () => { if (await confirmBox('Remove the PIN lock?', 'Remove')) { localStorage.removeItem(PIN_KEY); settingsView(); } };
   if (perm === 'default') $('#notif').onclick = async () => { await Notification.requestPermission(); settingsView(); };
-  $('#kwsave').onclick = () => {
-    const out = {}; for (const [k] of KW_LABELS) out[k] = $('#kw-' + k).value.split(',').map(x => x.trim()).filter(Boolean);
-    localStorage.setItem(KW_KEY, JSON.stringify(out)); toast('Sorting words saved.');
-  };
-  $('#kwreset').onclick = async () => { if (await confirmBox('Reset all sorting words to the defaults?', 'Reset')) { localStorage.removeItem(KW_KEY); settingsView(); } };
   $('#savemail').onclick = () => { localStorage.setItem('cf_email', $('#mail').value.trim()); toast('Email saved.'); };
   $('#export').onclick = async () => {
     const data = { app: 'case-flow', version: 1, exportedAt: new Date().toISOString(), clients: await DB.all('clients'), notes: await DB.all('notes'), reminders: await DB.all('reminders') };

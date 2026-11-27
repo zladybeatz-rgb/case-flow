@@ -269,3 +269,11 @@ details.kw textarea { margin-top: .4rem; }
 .ed { display: block; outline: none; border-radius: 6px; padding: .1rem .2rem; margin: 0 -.2rem; }
 .ed:focus { background: color-mix(in srgb, var(--brand) 10%, transparent); }
 input[type=checkbox] { accent-color: var(--brand); }
+
+/* ===== Simple Yes/No for child sighted, compact switch, toast action ===== */
+.shead .seg { margin-left: auto; margin-right: .6rem; }
+.seg button[data-v="Yes"][aria-checked="true"] { background: var(--brand); color: var(--brand-ink); }
+.seg button[data-v="No"][aria-checked="true"] { background: var(--warn-bg); color: var(--warn); }
+.switchrow.compact { align-items: center; padding: .5rem .75rem; margin: 0; width: 100%; text-align: left; }
+.switchrow.compact input { margin-top: 0; }
+#toast button { background: none; border: 0; color: var(--soft); font: 700 1rem var(--sans); text-decoration: underline; padding: .3rem .4rem; cursor: pointer; }
